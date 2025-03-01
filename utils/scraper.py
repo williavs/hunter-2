@@ -13,8 +13,7 @@ from rapidfuzz import process, fuzz
 # Suppress InsecureRequestWarning messages
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Use the centralized logger
 logger = logging.getLogger(__name__)
 
 # Initialize HTML to text converter
@@ -48,12 +47,12 @@ def guess_website_column(df):
 @st.dialog("Website Field Mapping", width="large")
 def website_mapping_dialog(df):
     """
-    Modal dialog for mapping website columns and configuring scraping options.
+    Simplified modal dialog for mapping website columns.
     
     Args:
         df: DataFrame containing the uploaded contact data
     """
-    st.write("Please map required columns and configure scraping options")
+    st.write("Please confirm the website and contact name columns")
     
     # Get all columns from the dataframe
     all_columns = list(df.columns)
@@ -61,11 +60,13 @@ def website_mapping_dialog(df):
     # Use fuzzy matching to guess the website column
     guessed_website_col = guess_website_column(df)
     
-    # Use fuzzy matching to guess the name column
-    guessed_name_col = guess_name_column(df)
+    # Check if the dataframe has separate first and last name columns
+    has_separate_names, first_name_col, last_name_col = detect_name_columns(df)
+    
+    # Use fuzzy matching to guess the name column if no separate names detected
+    guessed_name_col = guess_name_column(df) if not has_separate_names else None
     
     # Column selection section
-    st.subheader("Column Mapping")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -73,53 +74,75 @@ def website_mapping_dialog(df):
         website_column = st.selectbox(
             "Select the column containing website URLs:",
             options=all_columns,
-            index=all_columns.index(guessed_website_col) if guessed_website_col in all_columns else 0,
-            help="Choose the column that contains website URLs for scraping"
+            index=all_columns.index(guessed_website_col) if guessed_website_col in all_columns else 0
         )
     
-    with col2:
-        # Name column selection
-        name_column = st.selectbox(
-            "Select the column containing contact names:",
-            options=all_columns,
-            index=all_columns.index(guessed_name_col) if guessed_name_col in all_columns else 0,
-            help="Choose the column that contains contact names (required for personality analysis)"
-        )
-    
-    # Configuration options
-    st.subheader("Scraping Configuration")
-    col1, col2 = st.columns(2)
-    with col1:
-        max_workers = st.slider("Max parallel workers:", 1, 20, 10, 
-                              help="Number of websites to process in parallel")
+    # Handle name column selection based on whether we have separate first/last name columns
+    if has_separate_names:
+        st.info("We detected separate first and last name columns in your data. Please confirm them below.")
         
-    with col2:
-        timeout = st.slider("Request timeout (seconds):", 3, 30, 10,
-                         help="Time to wait for website response")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # First name column selection
+            first_name_column = st.selectbox(
+                "Select the column containing first names:",
+                options=all_columns,
+                index=all_columns.index(first_name_col) if first_name_col in all_columns else 0
+            )
+        
+        with col2:
+            # Last name column selection
+            last_name_column = st.selectbox(
+                "Select the column containing last names:",
+                options=all_columns,
+                index=all_columns.index(last_name_col) if last_name_col in all_columns else 0
+            )
+            
+        name_column = "full_name"  # This will be created during processing
+    else:
+        # Regular name column selection
+        with col2:
+            name_column = st.selectbox(
+                "Select the column containing contact names:",
+                options=all_columns,
+                index=all_columns.index(guessed_name_col) if guessed_name_col in all_columns else 0
+            )
     
-    # Additional options section
-    with st.expander("Advanced Options"):
-        extract_links = st.checkbox("Extract links from websites", value=True,
-                                  help="Also extract links from each website")
-        max_content_length = st.number_input(
-            "Maximum content length (characters):",
-            min_value=1000,
-            max_value=200000,
-            value=50000,
-            help="Limit on how much content to process from each website"
-        )
+    # Fixed configuration values
+    max_workers = 20
+    timeout = 10
+    extract_links = True
+    max_content_length = 50000
     
     # Store settings in session state
-    if st.button("Start Website Scraping"):
+    if st.button("Start Website Scraping", key="dialog_start_scraping_button"):
         # Save mapping settings
         st.session_state.website_mapping = {
             "website_column": website_column,
             "name_column": name_column,
+            "has_separate_names": has_separate_names,
+            "first_name_column": first_name_column if has_separate_names else None,
+            "last_name_column": last_name_column if has_separate_names else None,
             "max_workers": max_workers,
             "timeout": timeout,
             "extract_links": extract_links,
             "max_content_length": max_content_length
         }
+        
+        # If we have separate name columns, create a combined full name column
+        if has_separate_names:
+            # Create a copy of the dataframe
+            result_df = df.copy()
+            
+            # Combine first and last names into a new column
+            result_df['full_name'] = result_df.apply(
+                lambda row: f"{row[first_name_column]} {row[last_name_column]}".strip(), 
+                axis=1
+            )
+            
+            # Use the new dataframe for processing
+            df = result_df
         
         # Ensure the name column exists in the dataframe
         if name_column not in df.columns:
@@ -163,6 +186,76 @@ def guess_name_column(df):
         best_match = df.columns[0]
         
     return best_match
+
+def detect_name_columns(df):
+    """
+    Detect if the dataframe has separate first name and last name columns.
+    
+    Returns:
+        tuple: (has_separate_names, first_name_col, last_name_col)
+    """
+    first_name_keywords = ['first name', 'firstname', 'first', 'given name', 'given', 'fname']
+    last_name_keywords = ['last name', 'lastname', 'last', 'surname', 'family name', 'family', 'lname']
+    
+    # Find best match for first name
+    first_name_col = None
+    first_name_score = 0
+    
+    # Find best match for last name
+    last_name_col = None
+    last_name_score = 0
+    
+    for col in df.columns:
+        col_lower = col.lower()
+        
+        # Check for exact matches first (higher priority)
+        if col_lower in first_name_keywords or any(keyword == col_lower for keyword in first_name_keywords):
+            first_name_col = col
+            first_name_score = 100  # Perfect match
+            continue
+            
+        if col_lower in last_name_keywords or any(keyword == col_lower for keyword in last_name_keywords):
+            last_name_col = col
+            last_name_score = 100  # Perfect match
+            continue
+        
+        # Then check for fuzzy matches
+        for keyword in first_name_keywords:
+            score = fuzz.ratio(col_lower, keyword)
+            if score > first_name_score:
+                first_name_score = score
+                first_name_col = col
+        
+        for keyword in last_name_keywords:
+            score = fuzz.ratio(col_lower, keyword)
+            if score > last_name_score:
+                last_name_score = score
+                last_name_col = col
+    
+    # Check for common patterns in column names
+    if not first_name_col or not last_name_col:
+        for col in df.columns:
+            col_lower = col.lower()
+            # Check for columns that contain "first" or "last"
+            if "first" in col_lower and (first_name_score < 80 or not first_name_col):
+                first_name_col = col
+                first_name_score = max(first_name_score, 80)
+            if "last" in col_lower and (last_name_score < 80 or not last_name_col):
+                last_name_col = col
+                last_name_score = max(last_name_score, 80)
+    
+    # Determine if we have separate name columns
+    # We consider it valid if both columns are found with a reasonable confidence
+    has_separate_names = (first_name_score > 70 and last_name_score > 70 and 
+                         first_name_col is not None and last_name_col is not None and
+                         first_name_col != last_name_col)  # Make sure they're not the same column
+    
+    # If we have a full name column already, don't use separate names
+    has_full_name = any(col.lower() in ['name', 'full name', 'fullname'] for col in df.columns)
+    if has_full_name:
+        has_separate_names = False
+    
+    return has_separate_names, first_name_col, last_name_col
 
 def clean_url(url):
     """Ensure URL is properly formatted with protocol"""

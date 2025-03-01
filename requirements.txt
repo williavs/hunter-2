@@ -8,8 +8,10 @@ tqdm
 urllib3
 beautifulsoup4
 langchain
-langchain_anthropic
+langchain_openai
 langchain_community
 langgraph
 tavily-python
 python-dotenv
+pymupdf
+

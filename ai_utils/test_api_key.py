@@ -1,88 +1,61 @@
 """
-Test script to validate API keys are loaded correctly.
+Simple script to validate API keys are loaded correctly.
 Run this script directly to check if your .env file is configured properly.
 """
 
 import os
-import sys
 import logging
+from dotenv import load_dotenv
+from utils.logging_config import configure_logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-    ]
-)
-logger = logging.getLogger("api_key_test")
+# Use the centralized logger
+logger = logging.getLogger(__name__)
 
-# First attempt to load keys with dotenv
-try:
-    from dotenv import load_dotenv
-    # Get the directory of this script
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Go up one level to find the .env file in the project root
-    root_dir = os.path.dirname(current_dir)
-    dotenv_path = os.path.join(root_dir, '.env')
-    
-    logger.info(f"Looking for .env file at: {dotenv_path}")
-    logger.info(f".env file exists: {os.path.exists(dotenv_path)}")
-    
-    if os.path.exists(dotenv_path):
-        load_dotenv(dotenv_path)
-        logger.info(f"Loaded environment variables from {dotenv_path}")
-    else:
-        logger.warning(f"No .env file found at {dotenv_path}")
-except Exception as e:
-    logger.error(f"Error loading dotenv: {str(e)}")
+# Load environment variables from .env file
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+dotenv_path = os.path.join(root_dir, '.env')
+
+logger.info(f"Looking for .env file at: {dotenv_path}")
+logger.info(f".env file exists: {os.path.exists(dotenv_path)}")
+
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+    logger.info(f"Loaded environment variables from {dotenv_path}")
+else:
+    logger.warning(f"No .env file found at {dotenv_path}")
 
 # Check if API keys are set
-anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+openrouter_key = os.environ.get("OPENROUTER_API_KEY")
 tavily_key = os.environ.get("TAVILY_API_KEY")
 
-logger.info(f"ANTHROPIC_API_KEY loaded: {'Yes' if anthropic_key else 'No'}")
-if anthropic_key:
-    # Only show first 10 characters for security
-    key_preview = anthropic_key[:10] + "..." if len(anthropic_key) > 10 else anthropic_key
-    logger.info(f"ANTHROPIC_API_KEY starts with: {key_preview}")
-    logger.info(f"ANTHROPIC_API_KEY length: {len(anthropic_key)}")
-    logger.info(f"ANTHROPIC_API_KEY format appears to be: {'valid' if anthropic_key.startswith('sk-ant') else 'invalid'}")
+logger.info(f"OPENROUTER_API_KEY loaded: {'Yes' if openrouter_key else 'No'}")
+if openrouter_key:
+    # Only show first 5 characters for security
+    key_preview = openrouter_key[:5] + "..." if len(openrouter_key) > 5 else openrouter_key
+    logger.info(f"OPENROUTER_API_KEY starts with: {key_preview}")
+    logger.info(f"OPENROUTER_API_KEY length: {len(openrouter_key)}")
     
     # Check for placeholder values
-    if "your_anthr" in anthropic_key or "placeholder" in anthropic_key.lower():
-        logger.error("DETECTED PLACEHOLDER VALUE IN ANTHROPIC_API_KEY. Please update your .env file with a real API key.")
+    if "your_key" in openrouter_key or "placeholder" in openrouter_key.lower():
+        logger.error("DETECTED PLACEHOLDER VALUE IN OPENROUTER_API_KEY. Please update your .env file with a real API key.")
 else:
-    logger.error("ANTHROPIC_API_KEY is not set in environment variables")
+    logger.error("OPENROUTER_API_KEY is not set in environment variables")
 
 logger.info(f"TAVILY_API_KEY loaded: {'Yes' if tavily_key else 'No'}")
-
-# Try to import and initialize the Anthropic client directly
-try:
-    logger.info("Attempting to initialize Anthropic client directly...")
-    import anthropic
-    client = anthropic.Anthropic(api_key=anthropic_key)
-    logger.info("Successfully initialized Anthropic client")
-    
-    # Try a simple API call to verify the key works
-    logger.info("Attempting a simple API call...")
-    try:
-        message = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
-            max_tokens=10,
-            messages=[
-                {"role": "user", "content": "Say hello"}
-            ]
-        )
-        logger.info(f"API call successful! Response: {message.content}")
-        logger.info("✅ Your Anthropic API key is working correctly!")
-    except Exception as api_error:
-        logger.error(f"API call failed with error: {str(api_error)}")
-        logger.error("❌ Your Anthropic API key is not working correctly.")
-        
-except Exception as e:
-    logger.error(f"Error initializing Anthropic client: {str(e)}")
+if tavily_key:
+    # Only show first 5 characters for security
+    key_preview = tavily_key[:5] + "..." if len(tavily_key) > 5 else tavily_key
+    logger.info(f"TAVILY_API_KEY starts with: {key_preview}")
+    logger.info(f"TAVILY_API_KEY length: {len(tavily_key)}")
+else:
+    logger.error("TAVILY_API_KEY is not set in environment variables")
 
 if __name__ == "__main__":
-    # Nothing to do here, the script runs when imported
-    pass 
+    # Configure logging with INFO level for this script when run directly
+    configure_logging(level=logging.INFO)
+    
+    print("\nAPI Key Check Summary:")
+    print(f"OpenRouter API Key: {'✅ Present' if openrouter_key else '❌ Missing'}")
+    print(f"Tavily API Key: {'✅ Present' if tavily_key else '❌ Missing'}")
+    print("\nRun this script anytime to verify your API keys are properly loaded.") 
