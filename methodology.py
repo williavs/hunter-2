@@ -327,28 +327,14 @@ workflow.set_entry_point("planning")
         4. **Cost Efficiency**: Optimal balance of quality and computation cost
         5. **Prompt Adherence**: Follows structured output requirements
         
-        We've tested across multiple models, including GPT-4, Claude 3 Opus, and Claude 3 Sonnet, finding that Claude models generally excel at:
+        We've tested across multiple models, including GPT-4o, Claude 3.5 Sonnet, Claude 3.5 Haiku, and Claude 3.7 Sonnet, finding that Claude models generally excel at:
         
         - Following XML-structured prompts
         - Providing consistent confidence assessments
         - Generating actionable sales insights
         """)
         
-        # Model comparison bar chart
-        models = ["Claude 3.5 Haiku", "Claude 3 Sonnet", "GPT-4o", "Claude 3 Opus"]
-        metrics = ["Reasoning", "Empathy", "Consistency", "Cost Efficiency", "Adherence"]
         
-        # Sample scores for visualization (out of 10)
-        data = {
-            "Claude 3.5 Haiku": [8.5, 9.0, 9.2, 9.5, 9.1],
-            "Claude 3 Sonnet": [9.2, 9.5, 9.0, 8.0, 9.3],
-            "GPT-4o": [9.0, 8.5, 8.8, 8.0, 8.5],
-            "Claude 3 Opus": [9.5, 9.7, 9.5, 7.0, 9.5]
-        }
-        
-        df = pd.DataFrame(data, index=metrics)
-        
-        st.bar_chart(df)
         
         st.markdown("""
         ### Prompt Engineering Methodology
@@ -470,5 +456,6 @@ workflow.set_entry_point("planning")
         5. **Feedback Integration**: Closing the loop with salesperson feedback on analysis quality
         """)
 
-if __name__ == "__main__":
+# This ensures the page content is displayed when loaded through navigation
+if __name__ != "__main__":
     show_methodology_page() 

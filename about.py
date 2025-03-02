@@ -255,4 +255,8 @@ if __name__ == "__main__":
         initial_sidebar_state="expanded"
     )
     
+    show_about_page()
+
+# This ensures the page content is displayed when loaded through navigation
+if __name__ != "__main__":
     show_about_page() 
