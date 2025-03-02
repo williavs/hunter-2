@@ -178,18 +178,7 @@ if "has_combined_names" not in st.session_state:
 openrouter_key = os.environ.get("OPENROUTER_API_KEY")
 tavily_key = os.environ.get("TAVILY_API_KEY")
 
-if not openrouter_key or not tavily_key:
-    missing_keys = []
-    if not openrouter_key:
-        missing_keys.append("OpenRouter API Key")
-    if not tavily_key:
-        missing_keys.append("Tavily API Key")
-    
-    st.warning(
-        f"⚠️ Missing API keys: {', '.join(missing_keys)}. "
-        f"Please add your API keys in the sidebar to enable personality analysis. "
-        f"You can still upload contact data and scrape websites, but personality analysis will not work without valid API keys."
-    )
+
     
 # Enhanced sidebar title (moved to streamlit_app.py as it's common)
 # st.sidebar.markdown("""

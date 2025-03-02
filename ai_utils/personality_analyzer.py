@@ -141,7 +141,7 @@ class PersonalityAnalyzer:
     def __init__(self, 
                  openrouter_api_key: Optional[str] = None,
                  tavily_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.7-sonnet:beta",
+                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta",
                  max_concurrent: int = 10):
         """
         Initialize the personality analyzer.
@@ -847,13 +847,13 @@ show how our solutions address their challenges:
         return await self.analyze_personalities_with_contacts(contacts)
 
 # Function for integration with the main application
-async def analyze_personality(df: pd.DataFrame, model_name: str = "anthropic/claude-3.7-sonnet:beta", company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+async def analyze_personality(df: pd.DataFrame, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta", company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     """
     Analyze personalities for contacts in a DataFrame.
     
     Args:
         df: DataFrame with contact information
-        model_name: Name of the model to use for analysis (default: "anthropic/claude-3.7-sonnet:beta")
+        model_name: Name of the model to use for analysis (default: "anthropic/claude-3.5-haiku-20241022:beta")
         company_context: Dictionary containing information about the user's company
         
     Returns:

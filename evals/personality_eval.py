@@ -56,7 +56,7 @@ if not tavily_api_key:
 # Initialize the OpenRouter client with the haiku model
 llm = ChatOpenRouter(
     openai_api_key=openrouter_api_key,
-    model="anthropic/claude-3.7-sonnet:beta",
+    model="anthropic/claude-3.5-haiku-20241022:beta",
     temperature=0.1,
     streaming=False
 )
@@ -405,7 +405,7 @@ async def personality_analysis_target(inputs: dict) -> dict:
         # First, get the company context using the company context workflow for the SELLER (gtmWizards)
         company_context = await analyze_company_context(
             company_url=company_url,
-            model_name="anthropic/claude-3.7-sonnet:beta",
+            model_name="anthropic/claude-3.5-haiku-20241022:beta",
             target_geography=target_geography
         )
         
@@ -425,7 +425,7 @@ async def personality_analysis_target(inputs: dict) -> dict:
         analyzer = PersonalityAnalyzer(
             openrouter_api_key=openrouter_api_key,
             tavily_api_key=tavily_api_key,
-            model_name="anthropic/claude-3.7-sonnet:beta"
+            model_name="anthropic/claude-3.5-haiku-20241022:beta"
         )
         
         # Enable tracing

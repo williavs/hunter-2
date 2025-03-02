@@ -44,7 +44,7 @@ async def main():
     analyzer = PersonalityAnalyzer(
         openrouter_api_key=openrouter_api_key,
         tavily_api_key=tavily_api_key,
-        model_name="anthropic/claude-3.7-sonnet:beta"
+        model_name="anthropic/claude-3.5-haiku-20241022:beta"
     )
     
     # Run the analysis

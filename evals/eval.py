@@ -32,7 +32,7 @@ if not tavily_api_key:
 # Initialize the OpenRouter client with the haiku model
 llm = ChatOpenRouter(
     openai_api_key=openrouter_api_key,
-    model="anthropic/claude-3.7-sonnet:beta",
+    model="anthropic/claude-3.5-haiku-20241022:beta",
     temperature=0.1,
     streaming=False
 )
@@ -121,7 +121,7 @@ async def company_context_target(inputs: dict) -> dict:
         # Use our existing company context analysis function
         result = await analyze_company_context(
             company_url=company_url,
-            model_name="anthropic/claude-3.7-sonnet:beta",
+            model_name="anthropic/claude-3.5-haiku-20241022:beta",
             target_geography=target_geography
         )
         

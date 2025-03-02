@@ -80,7 +80,7 @@ class CompanyContextAnalyzer:
     def __init__(self, 
                  openrouter_api_key: Optional[str] = None,
                  tavily_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.7-sonnet:beta"):
+                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta"):
         """
         Initialize the company context analyzer.
         
@@ -591,7 +591,7 @@ class CompanyContextAnalyzer:
             return error_context
 
 # Function for integration with the main application
-async def analyze_company_context(company_url: str, model_name: str = "anthropic/claude-3.7-sonnet:beta", target_geography: str = None) -> Dict[str, Any]:
+async def analyze_company_context(company_url: str, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta", target_geography: str = None) -> Dict[str, Any]:
     """
     Analyze a company based on its website URL.
     
