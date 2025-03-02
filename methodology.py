@@ -11,10 +11,7 @@ def show_methodology_page():
     
     st.markdown("""
     # AI Sales Intelligence: Technical Architecture & Methodology
-    
-    This page provides an in-depth technical explanation of the AI systems powering GTM Wizards' sales intelligence platform.
-    Designed for technical audiences, data scientists, and AI engineers, this documentation outlines our architecture,
-    evaluation framework, and development methodology.
+   
     """)
     
     # Create tabs for different sections
@@ -26,7 +23,6 @@ def show_methodology_page():
         st.markdown("""
         ### High-Level Architecture
         
-        The GTM Wizards platform is built on a modular architecture centered around a multi-agent system orchestrated through LangGraph.
         The system processes sales prospect data through several specialized components:
         
         1. **Data Ingestion Layer**: Processes contact information from CSV uploads or API connections
