@@ -52,8 +52,8 @@ FIXED_MODEL = "anthropic/claude-3.5-haiku-20241022:beta"
 # This prevents conflicts with st.navigation
 if __name__ == "__main__":
     st.set_page_config(
-        page_title="Contact Data Enrichment Tool",
-        page_icon="📇",
+        page_title="HUNTER",
+        page_icon="🎯",
         layout="wide", 
         initial_sidebar_state="expanded", 
         # Use wide layout for better data display

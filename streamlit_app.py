@@ -2,8 +2,8 @@ import streamlit as st
 
 # Set page config - this must be the first Streamlit command
 st.set_page_config(
-    page_title="GTM Wizards",
-    page_icon="🧙‍♂️",
+    page_title="HUNTER",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
