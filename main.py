@@ -188,7 +188,7 @@ tavily_key = os.environ.get("TAVILY_API_KEY")
 
 # Use native Streamlit components for the title and subtitle
 
-st.markdown("---")  # Add a divider for visual separation
+
 
 # Use an icon to indicate missing API keys in the sidebar title
 if not openrouter_key or not tavily_key:
@@ -239,8 +239,7 @@ else:
     st.sidebar.success("LLM Juiced 🔥")
 
 # Add Company Context section
-with st.expander("Company Context Configuration", expanded=False):
-    st.write("Provide information about your company to make personality analyses more relevant and actionable.")
+with st.expander("Step 1. Setup Company Context", expanded=True):
     
     # Determine current workflow state
     has_scraped_content = "website_content" in st.session_state.get("company_context", {})
@@ -559,7 +558,7 @@ with st.expander("Company Context Configuration", expanded=False):
                 st.error("Please enter a company description.")
 
 # File upload section
-uploaded_file = st.file_uploader("Upload your contact CSV file", type="csv")
+uploaded_file = st.file_uploader("Step 2. Upload your contact CSV file", type="csv")
 
 if uploaded_file is not None:
     # Load data if not already loaded
