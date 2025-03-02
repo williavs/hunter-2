@@ -192,7 +192,7 @@ tavily_key = os.environ.get("TAVILY_API_KEY")
 
 # Use an icon to indicate missing API keys in the sidebar title
 if not openrouter_key or not tavily_key:
-    st.title(" :yellow[SETUP API KEYS IN SIDEBAR]")
+    st.title(":red[SETUP API KEYS IN SIDEBAR]")
     st.sidebar.subheader("⚠️ API Keys Configuration (Required)")
     st.sidebar.link_button("Get Tavily API Key", "https://app.tavily.com/")
     st.sidebar.link_button("Get OpenRouter API Key", "https://openrouter.ai/settings/keys")
