@@ -240,7 +240,7 @@ else:
     st.sidebar.success("LLM Juiced 🔥")
 
 # Add Company Context section
-with st.expander("Step 1. Setup Company Context", expanded=True):
+with st.expander("Step 1. Setup Company Context", expanded=False):
     
     # Determine current workflow state
     has_scraped_content = "website_content" in st.session_state.get("company_context", {})
