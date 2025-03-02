@@ -80,7 +80,7 @@ class CompanyContextAnalyzer:
     def __init__(self, 
                  openrouter_api_key: Optional[str] = None,
                  tavily_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta"):
+                 model_name: str = "anthropic/claude-3.7-sonnet:beta"):
         """
         Initialize the company context analyzer.
         
@@ -302,11 +302,18 @@ class CompanyContextAnalyzer:
                 results_text += f"\nQuery: {query_str}\n"
                 
                 # Limit to top 3 results per query for efficiency
-                for i, item in enumerate(result['results'][:3]):
-                    results_text += f"Result {i+1}: {item.get('title', 'No title')}\n"
+                results_list = result.get('results', [])
+                for i, item in enumerate(results_list[:3]):
+                    # Check if item is a dictionary or a string
+                    if isinstance(item, dict):
+                        title = item.get('title', 'No title')
+                        content = item.get('content', 'No content')
+                    else:
+                        # If item is a string or other type, handle it gracefully
+                        title = 'No title'
+                        content = str(item) if item else 'No content'
                     
-                    # Extract only the most relevant part of the content
-                    content = item.get('content', 'No content')
+                    results_text += f"Result {i+1}: {title}\n"
                     results_text += f"Content: {content[:500]}...\n\n"
         
         # Prepare scraped content for prompt (if available)
@@ -385,7 +392,7 @@ class CompanyContextAnalyzer:
             
             response = self.llm.invoke(messages)
             
-            # Extract company name from URL or search results
+            # Extract company name from URL, search results, or analysis text
             company_name = self._extract_company_name(company_url, search_results, response.content)
             
             # Extract target geography from response
@@ -584,7 +591,7 @@ class CompanyContextAnalyzer:
             return error_context
 
 # Function for integration with the main application
-async def analyze_company_context(company_url: str, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta", target_geography: str = None) -> Dict[str, Any]:
+async def analyze_company_context(company_url: str, model_name: str = "anthropic/claude-3.7-sonnet:beta", target_geography: str = None) -> Dict[str, Any]:
     """
     Analyze a company based on its website URL.
     

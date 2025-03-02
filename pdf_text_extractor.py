@@ -37,9 +37,9 @@ def extract_text_from_pdf(pdf_path):
 
 def main():
     # Directory containing the PDF files
-    pdf_directory = "JM Codexes"
+    pdf_directory = "assets"
     # Output file for combined text
-    output_file = "jm_codexes_context.txt"
+    output_file = "honeybadger.txt"
     
     # Get list of PDF files
     pdf_files = [f for f in os.listdir(pdf_directory) if f.lower().endswith('.pdf')]

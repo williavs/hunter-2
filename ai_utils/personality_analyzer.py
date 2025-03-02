@@ -118,6 +118,7 @@ class AnalysisResult(BaseModel):
     personality_analysis: str
     conversation_style: str
     professional_interests: List[str] = Field(default_factory=list)
+    purchasing_behavior: Optional[str] = Field(default="")
     error: Optional[str] = None
     search_queries_used: List[str] = Field(default_factory=list)
     search_results: List[Dict] = Field(default_factory=list)
@@ -140,7 +141,7 @@ class PersonalityAnalyzer:
     def __init__(self, 
                  openrouter_api_key: Optional[str] = None,
                  tavily_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta",
+                 model_name: str = "anthropic/claude-3.7-sonnet:beta",
                  max_concurrent: int = 10):
         """
         Initialize the personality analyzer.
@@ -148,7 +149,7 @@ class PersonalityAnalyzer:
         Args:
             openrouter_api_key: API key for OpenRouter
             tavily_api_key: API key for Tavily search
-            model_name: Model to use for analysis (defaults to claude-3.5-haiku)
+            model_name: Model to use for analysis (defaults to claude-3.7-sonnet)
             max_concurrent: Maximum number of concurrent analyses (used for search operations)
         """
         self.openrouter_api_key = openrouter_api_key
@@ -286,38 +287,49 @@ show how our solutions address their challenges:
         
         # Create context for the LLM with strict JSON formatting instructions
         prompt = f"""
-        I need to analyze the personality of the following person to help with sales outreach from my company:
-        
-        Contact Data:
-        {contact_data}
-        
-        {"NOTE: This contact does not have any website content available. Please create search queries based on their name, company, and role only." if not has_website_content else ""}
-        
-        {company_context_text}
-        
-        Your task is to create EXACTLY 2 highly targeted search queries that will help me understand:
-        1. Their communication style, professional background, and the specific PAIN POINTS they are likely experiencing in their role
-        2. Their professional interests, values, and how they typically respond to sales approaches
-        
-        IMPORTANT: 
-        - Create ONLY 2 queries - quality over quantity
-        - Make each query specific and information-rich
-        - Include their name, company, and role in each query
-        - Focus on identifying challenges, struggles, or "pain points" they might have that our solution could address
-        - Include industry-specific problems or objections they might raise based on their role
-        - Consider how our company's context relates to the specific problems they're trying to solve
-        
-        You must respond with ONLY a valid JSON array of strings. Each string should be a search query.
-        
-        Example of the EXACT format required:
-        ```json
-        [
-          "John Smith Microsoft CEO leadership challenges digital transformation obstacles enterprise adoption barriers",
-          "John Smith Microsoft professional pain points executive decision-making process vendor evaluation criteria"
-        ]
-        ```
-        
-        Do not include any explanations, notes, or other text outside the JSON array. The response must be a valid JSON array that can be parsed directly.
+        <search_query_generation>
+            <context>
+                I need to analyze the personality of the following person to help with sales outreach from my company:
+                
+                Contact Data:
+                {contact_data}
+                
+                {"NOTE: This contact does not have any website content available. Please create search queries based on their name, company, and role only." if not has_website_content else ""}
+                
+                {company_context_text}
+            </context>
+            
+            <objective>
+                Your task is to create EXACTLY 2 highly targeted search queries that will help me understand:
+                1. Their communication style, professional background, and the specific PAIN POINTS they are likely experiencing in their role
+                2. Their professional interests, values, and how they typically respond to sales approaches
+            </objective>
+            
+            <search_strategy>
+                - Create ONLY 2 queries - quality over quantity
+                - Make each query specific and information-rich
+                - Include their name, company, and role in each query
+                - IMPORTANT: Include terms that will find EVIDENCE of their actual behavior (LinkedIn activity, writing style, speaking engagements)
+                - Focus on identifying challenges, struggles, or "pain points" they might have that our solution could address
+                - Include industry-specific problems or objections they might raise based on their role
+                - Consider how our company's context relates to the specific problems they're trying to solve
+                - Include terms to uncover industry benchmarks and metrics relevant to their role
+            </search_strategy>
+            
+            <response_format>
+                You must respond with ONLY a valid JSON array of strings. Each string should be a search query.
+                
+                Example of the EXACT format required:
+                ```json
+                [
+                  "John Smith Microsoft CEO leadership style communication preferences LinkedIn activity speaking engagements writing samples",
+                  "John Smith Microsoft decision-making process pain points enterprise transformation challenges vendor evaluation criteria"
+                ]
+                ```
+                
+                Do not include any explanations, notes, or other text outside the JSON array. The response must be a valid JSON array that can be parsed directly.
+            </response_format>
+        </search_query_generation>
         """
         
         try:
@@ -501,44 +513,111 @@ show how our solutions address their challenges:
         
         # Create analysis prompt without JSON output instructions
         prompt = f"""
-        Based on the following information about the contact, please create a concise personality analysis that would help me personalize my outreach from my company.
+        <personality_analysis_request>
+            <context>
+                Based on the following information about the contact, please create a concise personality analysis that would help me personalize my outreach from my company.
 
-        Contact Information:
-        {contact_data}
-        
-        {company_context_text}
-        
-        {"NOTE: This contact does not have any website content available. The analysis is based solely on search results." if not has_website_content else ""}
-        
-        Search Results:
-        {results_text}
-        
-        Please provide the following in your analysis:
-        
-        1. Personality Analysis: A brief summary of their likely personality traits, communication preferences, and working style based on available information.
-        
-        2. Conversation Style: How they likely prefer to communicate (direct, analytical, relational, etc.) and the best way to engage them in the first 3 seconds of a call.
-        
-        3. Professional Interests: A list of 3-5 professional topics they seem most interested in.
-        
-        4. Pain Points & Challenges: Identify 2-3 specific problems or challenges this person is likely facing in their role that OUR SOLUTION could address. BE SPECIFIC about how these connect to our company's offerings. Include both stated and unstated problems.
-        
-        5. Potential Objections: Based on the JM "Ack-Peel" methodology, predict 1-2 likely objections this person might raise, and suggest response approaches that acknowledge their concern before asking an open question.
-        
-        6. Personalized Approach (Route-Ruin-Multiply): Provide a detailed analysis using the RRM framework:
-           - Route: Identify the specific decision-maker position/role this person occupies and their sphere of influence
-           - Ruin: Analyze gaps in their current approach based on factual observations and show how these directly relate to problems OUR COMPANY solves
-           - Multiply: Determine a natural progression path that would help them evaluate our solution with specific reference to our company's capabilities
-           
-           Focus on analysis rather than scripted suggestions. Do not include exact phrases or quotable statements. Instead, provide factual observations about their situation and decision-making context as it relates to our company's offerings.
-        
-        If there's insufficient information for any section, please note that rather than making assumptions.
+                Contact Information:
+                {contact_data}
+                
+                {company_context_text}
+                
+                {"NOTE: This contact does not have any website content available. The analysis is based solely on search results." if not has_website_content else ""}
+                
+                Search Results:
+                {results_text}
+            </context>
+            
+            <analysis_framework>
+                <personality_analysis>
+                    - A detailed analysis of their specific personality traits, behavioral patterns, and psychological drivers
+                    - For each insight, clearly indicate CONFIDENCE LEVEL (High/Medium/Low) and the source of evidence
+                    - Example: "Shows a preference for direct communication [HIGH CONFIDENCE: based on LinkedIn writing style]"
+                    - Explore both analytical AND emotional aspects of their personality - what motivates them beyond just efficiency?
+                    - What career aspirations and professional growth goals might they have in their current role?
+                    - Note any unique characteristics that differentiate them from others in similar roles
+                    - For each inferred trait, provide ONE specific validation question a salesperson could ask to confirm
+                </personality_analysis>
+
+                <conversation_style>
+                    - How they specifically prefer to communicate (direct, analytical, relational, etc.)
+                    - Provide 2-3 exact conversational phrases or questions that would resonate with this person
+                    - Suggest a tailored email subject line that would catch their attention
+                    - Specify the ideal communication channel, timing, and frequency based on their personality
+                    - Provide ALTERNATIVE approaches for different possible communication preferences (since these are often inferred)
+                </conversation_style>
+
+                <professional_interests>
+                    - A list of 3-5 professional topics they seem most interested in
+                    - For each interest, note how it connects to their specific role and company situation
+                    - Identify any thought leaders or resources they might follow related to these interests
+                    - Consider both functional AND aspirational interests - what would help them grow professionally?
+                    - Include specific industry metrics and benchmarks relevant to each interest area
+                </professional_interests>
+
+                <company_context>
+                    - Analyze the company's likely growth stage (startup, scaling, mature) based on available evidence
+                    - Estimate their team size and organizational structure
+                    - Identify industry-specific challenges unique to their business sector
+                    - Note any recent news, funding, or market conditions that might affect their priorities
+                    - Consider their competitive landscape and how it impacts their decision-making
+                    - Identify potential internal champions/stakeholders who might influence decisions
+                </company_context>
+
+                <pain_points>
+                    - Identify 2-3 specific problems or challenges this person is likely facing in their role
+                    - For each pain point, include:
+                      * Specific evidence or inference source [with confidence level]
+                      * Industry-specific metrics/benchmarks related to this challenge
+                      * Concrete manifestations of this pain point in their specific role and context
+                      * Observable indicators a salesperson could look for in conversation
+                      * How our company's offerings specifically address this pain point
+                      * 1-2 validation questions to confirm if this pain point exists
+                </pain_points>
+
+                <purchasing_behavior>
+                    - Analyze how this specific individual likely makes purchasing decisions
+                    - Consider both rational factors AND emotional/career motivations that influence their buying process
+                    - What metrics or outcomes would most influence their buying process?
+                    - Note their likely research process before making decisions (demos, case studies, testimonials, etc.)
+                    - Specify potential budget constraints or approval processes based on their role and company
+                    - How does their career trajectory impact their purchasing priorities?
+                </purchasing_behavior>
+
+                <objections>
+                    - Based on the JM "Ack-Peel" methodology, predict 1-2 likely objections specific to this person
+                    - Include BOTH practical/technical objections AND personal/career-related hesitations
+                    - Suggest response approaches that acknowledge their concern before asking an open question
+                    - Include specific industry data or metrics to address each objection
+                    - Tailor the objection handling to their specific personality type and company situation
+                </objections>
+
+                <personalized_approach>
+                    - Route: Identify the specific decision-maker position/role this person occupies and their sphere of influence. Include their relationships with other stakeholders based on company size and structure.
+                    - Ruin: Analyze specific gaps in their current approach and show how these directly relate to problems OUR COMPANY solves. Reference their company's specific situation, growth stage, and industry challenges.
+                    - Multiply: Determine a natural progression path that would help them evaluate our solution with specific reference to our company's capabilities and their company's particular needs. Include how our solution helps their personal career trajectory.
+                    - Quick Wins: Suggest 1-2 specific items that could establish value in the first 1-2 weeks of engagement
+                </personalized_approach>
+            </analysis_framework>
+            
+            <guidance>
+                When insufficient information exists about the prospect's company, make reasonable inferences based on:
+                - The typical size/structure of companies with their job title
+                - Common challenges in their industry sector
+                - Standard growth patterns for their type of business
+                - Typical career paths for professionals in their role
+                
+                However, clearly indicate when you are making such inferences rather than stating known facts.
+                
+                REMEMBER: Focus equally on both PRACTICAL/TECHNICAL aspects AND EMOTIONAL/CAREER motivations throughout your analysis.
+            </guidance>
+        </personality_analysis_request>
         """
         
         try:
             # Get analysis from LLM
             messages = [
-                SystemMessage(content="You are an expert sales coach and personality analyst who specializes in the JM methodology for sales outreach. You help sales professionals personalize their approach based on prospect personalities and pain points. Your analysis should be practical, focused on actionable insights, and designed to help salespeople connect with prospects by addressing their specific problems with the company's solutions."),
+                SystemMessage(content="You are an expert sales coach and personality analyst who specializes in the JM methodology for sales outreach. You help sales professionals personalize their approach based on prospect personalities and pain points. Your analysis should be practical, focused on actionable insights, and designed to help salespeople connect with prospects by addressing their specific problems with the company's solutions. Be specific and concrete - avoid generic advice. Always link insights to the prospect's particular role, company stage, industry, and personality traits. Balance technical/practical analysis with emotional and career motivations - people buy for both rational AND emotional reasons."),
                 HumanMessage(content=prompt)
             ]
             
@@ -569,11 +648,18 @@ show how our solutions address their challenges:
             if style_section:
                 style = style_section.group(1).strip()
             
+            # Extract purchasing behavior using regex
+            purchasing_behavior = ""
+            purchasing_section = re.search(r'Purchasing Behavior Analysis:(.*?)(?=\n\n|\n\d\.|\Z)', response.content, re.DOTALL)
+            if purchasing_section:
+                purchasing_behavior = purchasing_section.group(1).strip()
+            
             # Create analysis result - ensure search_queries_used contains strings only
             analysis = {
                 "contact_id": contact_name,
                 "personality_analysis": response.content,
                 "conversation_style": style,
+                "purchasing_behavior": purchasing_behavior,
                 "professional_interests": interests,
                 "search_queries_used": [str(r.get("query", "")) for r in search_results],  # Convert to string to ensure compatibility
                 "search_results": [
@@ -761,13 +847,13 @@ show how our solutions address their challenges:
         return await self.analyze_personalities_with_contacts(contacts)
 
 # Function for integration with the main application
-async def analyze_personality(df: pd.DataFrame, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta", company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+async def analyze_personality(df: pd.DataFrame, model_name: str = "anthropic/claude-3.7-sonnet:beta", company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     """
     Analyze personalities for contacts in a DataFrame.
     
     Args:
         df: DataFrame with contact information
-        model_name: Name of the model to use for analysis (default: "anthropic/claude-3.5-haiku-20241022:beta")
+        model_name: Name of the model to use for analysis (default: "anthropic/claude-3.7-sonnet:beta")
         company_context: Dictionary containing information about the user's company
         
     Returns:
