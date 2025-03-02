@@ -9,10 +9,7 @@ import os
 def show_methodology_page():
     st.title("Technical Methodology")
     
-    st.markdown("""
-    # AI Sales Intelligence: Technical Architecture & Methodology
-   
-    """)
+ 
     
     # Create tabs for different sections
     tabs = st.tabs(["Architecture", "LangGraph Workflow", "Evaluation System", "Model Selection", "Technical Challenges"])
