@@ -187,8 +187,7 @@ tavily_key = os.environ.get("TAVILY_API_KEY")
 # """, unsafe_allow_html=True)
 
 # Use native Streamlit components for the title and subtitle
-st.title("Contact Data Enrichment Tool")
-st.caption("Enhance your contact database with AI-powered insights for targeted engagement")
+
 st.markdown("---")  # Add a divider for visual separation
 
 # Use an icon to indicate missing API keys in the sidebar title
