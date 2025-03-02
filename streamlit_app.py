@@ -19,8 +19,7 @@ st.sidebar.markdown(":grey[Deep Sales Intelligence]")
 # Define the pages for navigation
 pages = {
     "Tool": [
-        st.Page("main.py", title="HUNTER"),
-        st.Page("honeybadger_strategies.py", title="Honey Badger -JMM"),
+        st.Page("main.py", title="HUNTER")
     ],
     "Resources": [
         st.Page("about.py", title="About"),
