@@ -23,7 +23,7 @@ pages = {
 }
 
 # Create the navigation
-pg = st.navigation(pages, expanded=True)
+pg = st.navigation(pages, expanded=False)
 
 # Run the selected page
 pg.run() 
