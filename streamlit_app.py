@@ -1,9 +1,12 @@
 import streamlit as st
+from about import show_about_page
+from methodology import show_methodology_page
+import main
 
 # Set page config - this must be the first Streamlit command
 st.set_page_config(
-    page_title="HUNTER",
-    page_icon="🏹",
+    page_title="GTM Wizards",
+    page_icon="🧙‍♂️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -19,6 +22,7 @@ pages = {
     ],
     "Resources": [
         st.Page("about.py", title="About"),
+        st.Page("methodology.py", title="Technical Methodology"),
     ],
 }
 
