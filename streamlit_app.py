@@ -15,7 +15,7 @@ st.sidebar.markdown(":grey[Deep Sales Intelligence]")
 pages = {
     "GTM Tools": [
         st.Page("main.py", title="Contact Enrichment"),
-        st.Page("honeybadger_strategies.py", title="Honey Badger Strategies"),
+        st.Page("honeybadger_strategies.py", title="Honey Badger -JMM"),
     ],
     "Resources": [
         st.Page("about.py", title="About"),
