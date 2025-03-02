@@ -18,13 +18,14 @@ st.sidebar.markdown(":grey[Deep Sales Intelligence]")
 
 # Define the pages for navigation
 pages = {
-    "GTM Tools": [
-        st.Page("main.py", title="Contact Enrichment"),
+    "Tool": [
+        st.Page("main.py", title="HUNTER"),
         st.Page("honeybadger_strategies.py", title="Honey Badger -JMM"),
     ],
     "Resources": [
         st.Page("about.py", title="About"),
-        st.Page("methodology.py", title="Technical Methodology"),
+        st.Page("honeybadger_strategies.py", title="Honey Badger -JMM"),
+        st.Page("methodology.py", title="For the AI Nerds"),
     ],
 }
 
