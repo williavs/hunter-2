@@ -22,7 +22,7 @@ pages = {
         st.Page("main.py", title="HUNTER")
     ],
     "Resources": [
-        st.Page("about.py", title="About"),
+        st.Page("about.py", title="@V3Consult"),
         st.Page("honeybadger_strategies.py", title="Honey Badger -JMM"),
         st.Page("methodology.py", title="For the AI Nerds"),
     ],
