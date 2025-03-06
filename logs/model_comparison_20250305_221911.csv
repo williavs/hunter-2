@@ -1,0 +1,2 @@
+model,avg_eval_relevance,avg_eval_pain_points_quality,avg_eval_differentiation_quality,avg_eval_target_market_accuracy,avg_eval_sales_insights,avg_eval_summarization_clarity,avg_eval_practical_applicability,avg_eval_human_likeness,avg_eval_overall_quality,avg_execution_time
+Claude 3.7 Sonnet,4.0,5.0,4.0,4.0,5.0,4.0,5.0,3.0,4.0,27.51281476020813

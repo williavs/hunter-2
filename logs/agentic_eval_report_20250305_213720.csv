@@ -1,0 +1,2 @@
+company_url,target_geography,legacy_execution_time,agentic_execution_time,legacy_error,agentic_error,agentic_evaluation
+https://www.gtmwizards.com,Europe and North America,21.32011079788208,0,False,True,"{'relevance': 3, 'pain_points_quality': 3, 'differentiation_quality': 3, 'target_market_accuracy': 3, 'sales_insights': 3, 'search_quality': 3, 'information_validation': 3, 'resilience': 3, 'summarization_clarity': 3, 'practical_applicability': 3, 'human_likeness': 3, 'overall_quality': 3, 'feedback': 'No specific feedback provided.'}"

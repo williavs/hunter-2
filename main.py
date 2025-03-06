@@ -8,8 +8,8 @@ from io import StringIO
 from utils.scraper import process_websites_parallel, website_mapping_dialog, guess_website_column
 # Import directly from the renamed file
 from ai_utils.personality_analyzer import analyze_personality, PersonalityAnalyzer
-# Import the new company context workflow
-from ai_utils.company_context_workflow import analyze_company_context
+# Import the simple company analyzer instead of the workflow
+from ai_utils.simple_company_analyzer import analyze_company_context
 # Import the company scraper
 from utils.company_scraper import company_scraper_dialog, CompanyScraper
 # Import helper functions
@@ -43,7 +43,7 @@ if openrouter_key:
 logger.info(f"TAVILY_API_KEY loaded: {'Yes' if tavily_key else 'No'}")
 
 # Define the fixed model name
-FIXED_MODEL = "anthropic/claude-3.5-haiku-20241022:beta"
+FIXED_MODEL = "anthropic/claude-3.7-sonnet"
 
 # Helper function to keep session state variables permanent
 def keep_permanent_session_vars():
@@ -156,62 +156,43 @@ async def run_personality_analysis(df, company_context=None):
         # Create a copy of the dataframe to avoid modifying the original
         result_df = df.copy()
         
-        # Create a personality analyzer instance
-        analyzer = PersonalityAnalyzer(model_name=FIXED_MODEL)
+        # Set up progress tracking
+        total_rows = len(df)
         
-        # Process each row in the dataframe
-        for i, (idx, row) in enumerate(df.iterrows()):
-            # Update progress
-            progress = min((i + 1) / len(df), 1.0)
-            progress_bar.progress(progress)
-            status_text.text(f"Analyzing {i+1} of {len(df)}: {row.get(name_column, 'Unknown')}")
+        # Run the personality analysis on the entire DataFrame at once
+        try:
+            # Update status
+            status_text.text(f"Analyzing {total_rows} contacts...")
             
-            # Get the website content for this row
-            website_content = row.get('website_content', '')
+            # Call the analyze_personality function with the DataFrame
+            result_df = await analyze_personality(
+                df=result_df, 
+                model_name=FIXED_MODEL,
+                company_context=company_context
+            )
             
-            # Get the name for this row
-            name = row.get(name_column, '')
+            # Set progress to complete
+            progress_bar.progress(1.0)
+            status_text.text(f"Analysis complete for {total_rows} contacts")
             
-            # Skip rows without names or with very short names
-            if not name or len(name) < 3:
-                logger.warning(f"Skipping row {i} due to missing or very short name: '{name}'")
-                continue
+            # Add company context info to the result
+            if company_context and "company_context" not in result_df.columns:
+                company_name = company_context.get('name', 'Unknown')
+                company_desc = company_context.get('description', '')
+                if company_desc and len(company_desc) > 100:
+                    company_desc = company_desc[:97] + '...'
+                result_df['company_context'] = f"{company_name}: {company_desc}"
             
-            # Analyze the personality
-            try:
-                analysis_result = await analyze_personality(
-                    name=name,
-                    website_content=website_content,
-                    company_context=company_context,
-                    model_name=FIXED_MODEL
-                )
-                
-                # Update the result dataframe with the analysis
-                if analysis_result:
-                    for key, value in analysis_result.items():
-                        result_df.loc[idx, key] = value
-                    
-                    # Also add the company context used for this analysis if available
-                    if company_context:
-                        company_name = company_context.get('name', 'Unknown')
-                        company_desc = company_context.get('description', '')
-                        if len(company_desc) > 100:
-                            company_desc = company_desc[:97] + '...'
-                        result_df.loc[idx, 'company_context'] = f"{company_name}: {company_desc}"
+        except Exception as e:
+            logger.error(f"Error in analyze_personality: {str(e)}")
+            st.error(f"An error occurred during personality analysis: {str(e)}")
             
-            except Exception as e:
-                logger.error(f"Error analyzing {name}: {str(e)}")
-                # Continue with the next row
-        
         return result_df
+        
     except Exception as e:
-        logger.error(f"Error during personality analysis: {str(e)}")
+        logger.error(f"Error during personality analysis setup: {str(e)}")
         st.error(f"An error occurred during personality analysis: {str(e)}")
         return df
-    finally:
-        # Clean up progress indicators
-        progress_bar.empty()
-        status_text.empty()
 
 # Enhanced sidebar title (moved to streamlit_app.py as it's common)
 # st.sidebar.markdown("""
@@ -276,17 +257,17 @@ else:
 with st.expander("Step 1. Setup Company Context", expanded=False):
     
     # Determine current workflow state
-    has_scraped_content = "website_content" in st.session_state.get("company_context", {})
+    has_url_entered = "url" in st.session_state.get("company_context", {})
     has_generated_context = bool(st.session_state.get("company_context", {}).get("description", ""))
     context_approved = st.session_state.get("context_approved", False)
     
     # Display current state/progress
     col_status = st.columns(3)
     with col_status[0]:
-        if has_scraped_content:
-            st.success("✅ 1. Website scraped")
+        if has_url_entered:
+            st.success("✅ 1. URL entered")
         else:
-            st.info("1. Website scraping needed")
+            st.info("1. Enter company URL")
     
     with col_status[1]:
         if has_generated_context:
@@ -300,7 +281,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
         else:
             st.info("3. Context approval needed")
     
-    # Step 1: Website Input & Combined Scrape+Generate Process
+    # Step 1: Website Input & Analysis Process
     st.markdown("### Step 1: Enter Company Website")
     
     col1, col2 = st.columns([3, 1])
@@ -323,7 +304,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
         
     with col2:
         combined_process_button = st.button(
-            "Scrape & Analyze", 
+            "Analyze", 
             key="scrape_analyze_btn_main",
             use_container_width=True,
             disabled=not company_url
@@ -335,46 +316,35 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
         if target_geography:
             st.session_state.target_geography = target_geography
         
-    # Handle the combined scraping and analysis process
+    # Handle the analysis process (no scraping)
     if combined_process_button:
-        with st.spinner("Step 1: Scraping website content..."):
+        with st.spinner("Analyzing company..."):
             try:
-                # First open the scraper dialog to get content
-                scraper = CompanyScraper(company_url, max_pages=10)
-                
                 # Progress tracking
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Define progress callback
-                def update_progress(current, total):
-                    progress = min(current / total, 1.0) * 0.5  # First 50% for scraping
-                    progress_bar.progress(progress)
-                    status_text.text(f"Scraping page {current} of {total}...")
+                # Update progress to indicate start
+                progress_bar.progress(0.1)
+                status_text.text("Starting company analysis...")
                 
-                # Run the scraper
-                pages_content = asyncio.run(scraper.scrape_website(progress_callback=update_progress))
-                
-                # Get content from the scraper
-                combined_content = scraper.get_combined_content()
-                
-                # Update progress
-                progress_bar.progress(0.5)  # 50% complete after scraping
-                status_text.text("Scraping complete. Now analyzing content...")
-                
-                # Save to session state
+                # Initialize company context in session state
                 if "company_context" not in st.session_state:
                     st.session_state.company_context = {}
                 
-                # Store the scraped content in session state
-                st.session_state.company_context["website_content"] = combined_content
+                # Update company URL in context
                 st.session_state.company_context["url"] = company_url
+                
                 # Add target geography to the context
                 if target_geography:
                     logger.info(f"Setting user-specified target geography: '{target_geography}'")
                     st.session_state.company_context["target_geography"] = target_geography
                 
-                # Now run the company context analysis with the target geography
+                # Update progress
+                progress_bar.progress(0.3)
+                status_text.text("Running company analysis...")
+                
+                # Run the company analysis
                 logger.info(f"Calling analyze_company_context with target_geography: '{target_geography}'")
                 try:
                     company_context = asyncio.run(analyze_company_context(
@@ -385,7 +355,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                     
                     # Update progress
                     progress_bar.progress(1.0)  # 100% complete
-                    status_text.text("Scraping and analysis complete!")
+                    status_text.text("Analysis complete!")
                     
                     # Check if we got a valid dictionary back
                     if not isinstance(company_context, dict):
@@ -403,16 +373,12 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                         # Update session state
                         st.session_state.company_name = company_context.get("name", "")
                         
-                        # Copy over the website_content we just saved
-                        website_content = st.session_state.company_context.get("website_content", "")
-                        
                         # Preserve the user-specified target geography if provided
                         user_geography = st.session_state.company_context.get("target_geography", "")
                         logger.info(f"Current target geography in session state: '{user_geography}'")
                         
-                        # Update with the analyzed context while preserving website content
+                        # Update with the analyzed context
                         st.session_state.company_context = company_context
-                        st.session_state.company_context["website_content"] = website_content
                         
                         # Override the detected geography with user-specified if available
                         if user_geography:
@@ -425,7 +391,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                         st.session_state.context_approved = False
                         
                         # Show success message
-                        st.success("Successfully scraped and analyzed your company website!")
+                        st.success("Successfully analyzed your company website!")
                         st.rerun()  # Rerun to show the approval section
                     else:
                         st.error("Unable to analyze company website. Please try again.")
@@ -433,13 +399,8 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                     logger.error(f"Error in company analysis: {str(e)}")
                     logger.exception("Detailed exception:")
                     st.error(f"Error analyzing company: {str(e)}")
-                    # We can still proceed with what we have from the scraping
-                    if "company_context" in st.session_state and st.session_state.company_context:
-                        st.info("However, we've saved your scraped website content. You can edit the context manually.")
-                        st.session_state.context_approved = False
-                        st.rerun()
             except Exception as e:
-                logger.error(f"Error in scrape and analyze process: {str(e)}")
+                logger.error(f"Error in analysis process: {str(e)}")
                 st.error(f"An error occurred: {str(e)}")
             finally:
                 # Clean up progress indicators
@@ -450,7 +411,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                     pass
     
     # Step 2: Review and approve the generated context
-    if has_scraped_content and has_generated_context and not context_approved:
+    if has_url_entered and has_generated_context and not context_approved:
         st.markdown("### Step 2: Review & Approve Generated Context")
         st.info("Please review the generated company context below. You can edit it before approving.")
         
@@ -464,7 +425,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
         company_description = st.text_area(
             "Company Description",
             value=company_context.get("description", ""),
-            height=150,
+            height=600,
             key="review_company_description"
         )
         
@@ -511,24 +472,6 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                         logger.error(f"Error adjusting context: {str(e)}")
                         st.error(f"Error adjusting context: {str(e)}")
         
-        # Display scraped content preview - use a container instead of an expander
-        st.markdown("#### Website Content Preview")
-        show_content = st.checkbox("Show scraped content", value=False)
-        
-        if show_content:
-            website_content = company_context.get("website_content", "")
-            content_preview = website_content[:2000] + "..." if len(website_content) > 2000 else website_content
-            st.text_area(
-                "Scraped Content",
-                value=content_preview,
-                height=200,
-                disabled=True
-            )
-            if website_content:
-                content_length = len(website_content)
-                approx_pages = max(1, content_length // 5000)  # Rough estimate of page count
-                st.info(f"📄 {approx_pages} pages of content scraped ({content_length} characters)")
-        
         # Approval button
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -564,23 +507,9 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
         st.markdown(f"_{company_context.get('description', '')}_")
         st.markdown(f"**Target Geography**: {company_context.get('target_geography', 'Global')}")
         
-        # Show scraped content metrics if available
-        if "website_content" in company_context and company_context["website_content"]:
-            content_length = len(company_context["website_content"])
-            approx_pages = max(1, content_length // 5000)
-            st.info(f"📄 Enhanced with website content from {approx_pages} pages ({content_length} characters)")
-        
-            # Show content preview with checkbox rather than expander
-            show_content = st.checkbox("Show website content", value=False)
-            if show_content:
-                website_content = company_context["website_content"]
-                content_preview = website_content[:2000] + "..." if len(website_content) > 2000 else website_content
-                st.text_area(
-                    "Website Content",
-                    value=content_preview,
-                    height=200,
-                    disabled=True
-                )
+        # Show confidence level if available
+        if "confidence" in company_context:
+            st.info(f"📈 Analysis Confidence: {company_context.get('confidence', 'Medium')}")
         
         # Option to edit again
         if st.button("Edit Context", key="edit_context_btn"):
@@ -588,13 +517,13 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
             st.rerun()
     
     # Display manual entry option if no context exists yet
-    elif not has_scraped_content and not has_generated_context:
+    elif not has_url_entered and not has_generated_context:
         st.markdown("### Or Enter Context Manually")
         manual_company_name = st.text_input("Company Name", value="", key="manual_company_name")
         manual_company_description = st.text_area(
             "Company Description", 
             value="",
-            height=150,
+            height=600,
             placeholder="Describe your company, products/services, target market and value proposition...",
             key="manual_company_description"
         )
