@@ -8,18 +8,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Helper function to keep session state variables permanent
+def keep_permanent_session_vars():
+    """Prevents Streamlit from clearing session state variables with p_ prefix"""
+    for key in list(st.session_state.keys()):
+        if key.startswith("p_"):
+            st.session_state[key] = st.session_state[key]
+
+# Call our helper function to ensure permanent session state variables persist
+keep_permanent_session_vars()
+
 # Import modules after setting page config
-from about import show_about_page
-from methodology import show_methodology_page
-import main
+# Don't import main directly to avoid duplicate UI elements
+# import main
 
 st.sidebar.title(":red[HUNTER]")
-st.sidebar.markdown(":grey[Deep Sales Intelligence]")
+st.sidebar.markdown(":grey[DEEP SALES INTELLIGENCE]")
 
 # Define the pages for navigation
 pages = {
-    "Tool": [
-        st.Page("main.py", title="HUNTER")
+    "Tools": [
+        st.Page("main.py", title="HUNTER"),
+        st.Page("spear.py", title="SPEAR"),
     ],
     "Resources": [
         st.Page("about.py", title="@V3Consult"),
@@ -29,7 +39,7 @@ pages = {
 }
 
 # Create the navigation
-pg = st.navigation(pages, expanded=False)
+pg = st.navigation(pages, expanded=True)
 
 # Run the selected page
 pg.run() 

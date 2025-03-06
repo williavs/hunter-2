@@ -2,14 +2,7 @@ import streamlit as st
 import base64
 import os
 
-# Only set page config when running this file directly (not through navigation)
-if __name__ == "__main__":
-    st.set_page_config(
-        page_title="HUNTER - Honey Badger Sales Methodology",
-        page_icon="🦡",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+
 
 # Title and introduction
 

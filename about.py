@@ -246,17 +246,7 @@ def show_about_page():
     </div>
     """, unsafe_allow_html=True)
 
-# Only set page config when running this file directly (not through navigation)
-if __name__ == "__main__":
-    st.set_page_config(
-        page_title="Willy VanSickle | HUNTER",
-        page_icon="ℹ️",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    show_about_page()
 
-# This ensures the page content is displayed when loaded through navigation
-if __name__ != "__main__":
-    show_about_page() 
+    
+show_about_page()
+

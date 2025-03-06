@@ -45,19 +45,62 @@ logger.info(f"TAVILY_API_KEY loaded: {'Yes' if tavily_key else 'No'}")
 # Define the fixed model name
 FIXED_MODEL = "anthropic/claude-3.5-haiku-20241022:beta"
 
-# ==========================
-# Core Application Settings
-# ==========================
-# Only set page config when running this file directly (not through navigation)
-# This prevents conflicts with st.navigation
-if __name__ == "__main__":
-    st.set_page_config(
-        page_title="HUNTER",
-        page_icon="🎯",
-        layout="wide", 
-        initial_sidebar_state="expanded", 
-        # Use wide layout for better data display
-    )
+# Helper function to keep session state variables permanent
+def keep_permanent_session_vars():
+    """Prevents Streamlit from clearing session state variables with p_ prefix"""
+    for key in list(st.session_state.keys()):
+        if key.startswith("p_"):
+            st.session_state[key] = st.session_state[key]
+
+# Function to show the main page UI
+def show_main_page():
+    """Contains all the UI components for the main page"""
+    # Initialize permanent session state variables
+    if "p_df" not in st.session_state:
+        st.session_state.p_df = None
+    
+    # Also add p_show_mapping_dialog to preserve dialog state between page navigation
+    if "p_show_mapping_dialog" not in st.session_state:
+        st.session_state.p_show_mapping_dialog = False
+    
+    # ==========================
+    # Core Application Settings
+    # ==========================
+    # Only set page config when running this file directly (not through navigation)
+    # This prevents conflicts with st.navigation
+    
+    # Initialize session state variables if not already set
+    if "df" not in st.session_state:
+        st.session_state.df = None
+    
+    # Using the p_ prefix convention for permanent session state variables
+    if "p_df" not in st.session_state:
+        st.session_state.p_df = None
+    
+    if "company_context" not in st.session_state:
+        st.session_state.company_context = {}
+    
+    if "website_column" not in st.session_state:
+        st.session_state.website_column = None
+    if "name_column" not in st.session_state:
+        st.session_state.name_column = None
+    if "processing_complete" not in st.session_state:
+        st.session_state.processing_complete = False
+    if "personality_analysis_complete" not in st.session_state:
+        st.session_state.personality_analysis_complete = False
+    if "scraped_df" not in st.session_state:
+        st.session_state.scraped_df = None
+    if "show_mapping_dialog" not in st.session_state:
+        st.session_state.show_mapping_dialog = False
+        # If p_show_mapping_dialog is True, sync this value
+        if "p_show_mapping_dialog" in st.session_state and st.session_state.p_show_mapping_dialog:
+            st.session_state.show_mapping_dialog = True
+    if "has_combined_names" not in st.session_state:
+        st.session_state.has_combined_names = False
+        
+    # Check for API keys and display warning if missing
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    tavily_key = os.environ.get("TAVILY_API_KEY")
 
 # ==========================
 # Helper Functions
@@ -92,61 +135,75 @@ async def run_personality_analysis(df, company_context=None):
             name_column = "full_name"
             st.session_state.name_column = name_column
     
-    # Create a progress bar
+    # Create a progress bar and status text
     progress_bar = st.progress(0)
     status_text = st.empty()
-    status_text.text("Preparing for personality analysis...")
-    
-    # Count rows with website content for logging
-    rows_with_content = len(df[df['website_content'].notna() & (df['website_content'] != "")])
-    logger.info(f"Analyzing {len(df)} contacts, of which {rows_with_content} have website content")
     
     try:
-        # Debug check for API keys before analysis
-        logger.debug("Checking API keys before personality analysis")
+        # Check for API keys
         openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-        tavily_key = os.environ.get("TAVILY_API_KEY")
-        
         if not openrouter_key:
-            logger.error("OPENROUTER_API_KEY not found in environment")
+            logger.error("OpenRouter API key not found")
             st.error("OpenRouter API key not found. Please set it in the API Keys Configuration section.")
             return df
         
+        tavily_key = os.environ.get("TAVILY_API_KEY")
         if not tavily_key:
-            logger.error("TAVILY_API_KEY not found in environment")
+            logger.error("Tavily API key not found")
             st.error("Tavily API key not found. Please set it in the API Keys Configuration section.")
             return df
         
-        logger.debug(f"Starting personality analysis with API keys (first chars): OpenRouter={openrouter_key[:8]}..., Tavily={tavily_key[:8]}...")
-        # Use the OpenRouter version of the analyzer with the fixed model
-        status_text.text(f"Analyzing personalities with Claude via OpenRouter for {len(df)} contacts ({rows_with_content} with website content)...")
-        progress_bar.progress(10)
+        # Create a copy of the dataframe to avoid modifying the original
+        result_df = df.copy()
         
-        # Log company context if available
-        if company_context:
-            # Check if we have website content
-            has_website_content = "website_content" in company_context and company_context["website_content"]
-            if has_website_content:
-                logger.info(f"Using company context with website content for analysis: {company_context.get('name', 'Unknown')}")
-                status_text.text(f"Analyzing personalities with enhanced company website content...")
+        # Create a personality analyzer instance
+        analyzer = PersonalityAnalyzer(model_name=FIXED_MODEL)
+        
+        # Process each row in the dataframe
+        for i, (idx, row) in enumerate(df.iterrows()):
+            # Update progress
+            progress = min((i + 1) / len(df), 1.0)
+            progress_bar.progress(progress)
+            status_text.text(f"Analyzing {i+1} of {len(df)}: {row.get(name_column, 'Unknown')}")
+            
+            # Get the website content for this row
+            website_content = row.get('website_content', '')
+            
+            # Get the name for this row
+            name = row.get(name_column, '')
+            
+            # Skip rows without names or with very short names
+            if not name or len(name) < 3:
+                logger.warning(f"Skipping row {i} due to missing or very short name: '{name}'")
+                continue
+            
+            # Analyze the personality
+            try:
+                analysis_result = await analyze_personality(
+                    name=name,
+                    website_content=website_content,
+                    company_context=company_context,
+                    model_name=FIXED_MODEL
+                )
                 
-                # Display a more informative message about the website content
-                content_length = len(company_context["website_content"])
-                approx_pages = max(1, content_length // 5000)  # Rough estimate of page count
-                logger.debug(f"Company website content: {content_length} characters, approximately {approx_pages} pages")
-            else:
-                logger.debug(f"Using company context for analysis: {company_context.get('name', 'Unknown')}")
-        else:
-            logger.debug("No company context provided for analysis")
+                # Update the result dataframe with the analysis
+                if analysis_result:
+                    for key, value in analysis_result.items():
+                        result_df.loc[idx, key] = value
+                    
+                    # Also add the company context used for this analysis if available
+                    if company_context:
+                        company_name = company_context.get('name', 'Unknown')
+                        company_desc = company_context.get('description', '')
+                        if len(company_desc) > 100:
+                            company_desc = company_desc[:97] + '...'
+                        result_df.loc[idx, 'company_context'] = f"{company_name}: {company_desc}"
+            
+            except Exception as e:
+                logger.error(f"Error analyzing {name}: {str(e)}")
+                # Continue with the next row
         
-        # Pass company context to the analyze_personality function
-        result_df = await analyze_personality(df, model_name=FIXED_MODEL, company_context=company_context)
-        
-        # Update progress
-        progress_bar.progress(100)
-        status_text.text("Personality analysis complete!")
         return result_df
-    
     except Exception as e:
         logger.error(f"Error during personality analysis: {str(e)}")
         st.error(f"An error occurred during personality analysis: {str(e)}")
@@ -156,30 +213,6 @@ async def run_personality_analysis(df, company_context=None):
         progress_bar.empty()
         status_text.empty()
 
-# Initialize session state
-if "df" not in st.session_state:
-    st.session_state.df = None
-if "website_column" not in st.session_state:
-    st.session_state.website_column = None
-if "name_column" not in st.session_state:
-    st.session_state.name_column = None
-if "processing_complete" not in st.session_state:
-    st.session_state.processing_complete = False
-if "personality_analysis_complete" not in st.session_state:
-    st.session_state.personality_analysis_complete = False
-if "scraped_df" not in st.session_state:
-    st.session_state.scraped_df = None
-if "show_mapping_dialog" not in st.session_state:
-    st.session_state.show_mapping_dialog = False
-if "has_combined_names" not in st.session_state:
-    st.session_state.has_combined_names = False
-    
-# Check for API keys and display warning if missing
-openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-tavily_key = os.environ.get("TAVILY_API_KEY")
-
-
-    
 # Enhanced sidebar title (moved to streamlit_app.py as it's common)
 # st.sidebar.markdown("""
 # <h1 style="text-align: center; color: #FF5722; font-weight: bold; margin-bottom: 5px;">HUNTER</h1>
@@ -291,7 +324,7 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
     with col2:
         combined_process_button = st.button(
             "Scrape & Analyze", 
-            key="scrape_analyze_btn",
+            key="scrape_analyze_btn_main",
             use_container_width=True,
             disabled=not company_url
         )
@@ -444,6 +477,40 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
             help="Specify your target market or where you're selling - this affects how problems are framed"
         )
         
+        # Add feedback field for context adjustments
+        context_feedback = st.text_area(
+            "Look off? What needs to be adjusted?",
+            value="",
+            height=100,
+            key="context_feedback",
+            help="Provide specific feedback on what needs to be adjusted in the company context. Our AI will refine it based on your input."
+        )
+        
+        # Add button to adjust context based on feedback
+        if context_feedback.strip():
+            if st.button("Adjust Context Based on Feedback", key="adjust_context_btn"):
+                with st.spinner("Adjusting company context based on your feedback..."):
+                    try:
+                        # Import the context adjuster
+                        from utils.context_adjuster import adjust_company_context
+                        
+                        # Call the adjuster with the current context and feedback
+                        adjusted_context = adjust_company_context(
+                            company_context,
+                            context_feedback
+                        )
+                        
+                        # Update the session state with adjusted context
+                        if adjusted_context:
+                            st.session_state.company_context = adjusted_context
+                            st.success("Context adjusted successfully!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to adjust context. Please try again or adjust manually.")
+                    except Exception as e:
+                        logger.error(f"Error adjusting context: {str(e)}")
+                        st.error(f"Error adjusting context: {str(e)}")
+        
         # Display scraped content preview - use a container instead of an expander
         st.markdown("#### Website Content Preview")
         show_content = st.checkbox("Show scraped content", value=False)
@@ -572,10 +639,14 @@ if uploaded_file is not None:
                 st.session_state.has_combined_names = True
             
             st.session_state.df = df
+            # Also store in permanent session state with p_ prefix
+            st.session_state.p_df = df.copy()
             st.session_state.processing_complete = False
             st.session_state.personality_analysis_complete = False
             # Automatically show the mapping dialog when file is uploaded
             st.session_state.show_mapping_dialog = True
+            # Also set the permanent version
+            st.session_state.p_show_mapping_dialog = True
     
     # Use the loaded dataframe
     df = st.session_state.df
@@ -637,6 +708,7 @@ if uploaded_file is not None:
         
         # Update the session state with edited data
         st.session_state.df = edited_df
+        st.session_state.p_df = edited_df.copy()
         
         # Process websites section
         st.subheader("Process Websites")
@@ -644,18 +716,23 @@ if uploaded_file is not None:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Show the mapping dialog if triggered
-            if st.session_state.show_mapping_dialog:
+            # First check the regular dialog flag, then check the permanent one as fallback
+            # This restores the original behavior when returning from other pages
+            if st.session_state.show_mapping_dialog or st.session_state.p_show_mapping_dialog:
+                # Reset both flags before showing dialog to avoid infinite loops
+                st.session_state.show_mapping_dialog = False
+                st.session_state.p_show_mapping_dialog = False
+                
                 website_mapping_dialog(df)
                 # Dialog will handle the processing and storing results
                 # The dialog sets st.session_state.scraped_df when complete
                 # And performs a st.rerun() to close the dialog
-                st.session_state.show_mapping_dialog = False
             
             # Simple button to start website scraping
             if not st.session_state.processing_complete:
                 if st.button("Start Website Scraping", key="start_scraping_button"):
                     st.session_state.show_mapping_dialog = True
+                    st.session_state.p_show_mapping_dialog = True
                     st.rerun()
             
             # Button to remove rows with failed website scraping
@@ -780,8 +857,9 @@ if uploaded_file is not None:
                     # Count how many rows were actually analyzed (have non-empty personality_analysis)
                     analyzed_count = len(result_df[result_df['personality_analysis'].notna() & (result_df['personality_analysis'] != "")])
                     
-                    # Store the result in session state
+                    # Save to session state
                     st.session_state.df = full_df
+                    st.session_state.p_df = full_df.copy()
                     st.session_state.personality_analysis_complete = True
                     st.success(f"Successfully analyzed personalities for {analyzed_count} contacts!")
                     st.rerun()
@@ -790,7 +868,13 @@ if uploaded_file is not None:
         st.subheader("Download Data")
         st.markdown(f'<a href="{get_download_link(df)}" download="enriched_contacts.csv" class="button">Download CSV</a>', unsafe_allow_html=True)
 
+# Keep our permanent session vars at the top of the app
+keep_permanent_session_vars()
+
 # Call the main function if running this file directly
 if __name__ == "__main__":
     # All content now at module level, so we don't need to call anything here
     pass
+else:
+    # Only run the UI when loaded as a page through navigation, not when imported
+    show_main_page()

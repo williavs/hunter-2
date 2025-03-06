@@ -26,9 +26,6 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 import json
 import re
 
-# Import the CompanyScraper for direct website scraping
-from utils.company_scraper import CompanyScraper
-
 # Import dotenv and load environment variables
 from dotenv import load_dotenv
 load_dotenv()
@@ -69,7 +66,6 @@ class CompanyState(TypedDict):
     company_url: str
     search_queries: List[str]
     search_results: List[Dict]
-    scraped_content: Optional[str]  # Added to store scraped website content
     company_context: Optional[Dict[str, Any]]
     errors: List[str]
     complete: bool
@@ -80,7 +76,7 @@ class CompanyContextAnalyzer:
     def __init__(self, 
                  openrouter_api_key: Optional[str] = None,
                  tavily_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta"):
+                 model_name: str = "anthropic/claude-3.5-sonnet-20241022:beta"):
         """
         Initialize the company context analyzer.
         
@@ -121,10 +117,11 @@ class CompanyContextAnalyzer:
         prompt = f"""
         I need to deep-dive research on a company with URL: {company_url} - and I need to UNLEARN everything I think I know about generic search queries.
         
-        Your task is to create EXACTLY 3 hyper-specific, needle-moving search queries that will help me understand:
-        1. The PAIN POINTS this company claims to solve - not just what they do, but what PROBLEMS they actually FIX for their customers
-        2. Their exact GTM approach, sales methodology, and how they position against competitors - SPECIFICALLY focusing on their claims of differentiation and unique selling points
-        3. Their TARGET MARKETS and GEOGRAPHIC FOCUS - specifically where they operate, which regions/countries they target, and how they adapt their solutions to different geographic markets
+        Your task is to create EXACTLY 4 hyper-specific, needle-moving search queries that will help me understand:
+        1. The exact company website URL and its main pages (about, products, services, etc.)
+        2. The PAIN POINTS this company claims to solve - not just what they do, but what PROBLEMS they actually FIX for their customers
+        3. Their exact GTM approach, sales methodology, and how they position against competitors - SPECIFICALLY focusing on their claims of differentiation and unique selling points
+        4. Their TARGET MARKETS and GEOGRAPHIC FOCUS - specifically where they operate, which regions/countries they target, and how they adapt their solutions to different geographic markets
         
         THIS IS CRITICAL: 
         - Drop the corporate fluff - I need to know what keeps their BUYERS up at night
@@ -132,12 +129,14 @@ class CompanyContextAnalyzer:
         - Use words like "challenges," "pain points," "struggles," "barriers," and "obstacles" in your queries
         - Include terms about their claimed competitive advantages, unique approach, or methodology
         - Focus ENTIRELY on what makes them different, what problems they solve, and where they operate - nothing else matters
+        - For the first query, make sure to include the exact URL and terms like "official website" "main pages" "about us" "products" "services"
         
         You must respond with ONLY a valid JSON array of strings. Each string should be a search query.
         
         Example of the EXACT format required:
         ```json
         [
+          "example.com official website main pages about us products services",
           "GTM Wizards B2B lead generation pain points challenges solved ICP development pipeline management go-to-market strategy",
           "GTM Wizards competitive advantage unique approach methodology differentiation vs traditional agencies market positioning",
           "GTM Wizards target markets geographic focus regional expansion international local adaptation strategy"
@@ -188,8 +187,8 @@ class CompanyContextAnalyzer:
             # Ensure all queries are strings
             search_queries = [str(query) for query in search_queries]
             
-            # Store search queries in state - limit to 3 queries
-            state["search_queries"] = search_queries[:3]  # Updated to 3 queries
+            # Store search queries in state - limit to 4 queries
+            state["search_queries"] = search_queries[:4]
             
         except Exception as e:
             error_msg = f"Error in planning: {str(e)}"
@@ -199,43 +198,11 @@ class CompanyContextAnalyzer:
             # Extract domain name for fallback query
             domain = company_url.replace("http://", "").replace("https://", "").split("/")[0]
             state["search_queries"] = [
+                f"{domain} official website main pages about us products services",
                 f"{domain} customer pain points problems solved", 
                 f"{domain} competitive advantage unique approach",
                 f"{domain} target markets geographic focus"
             ]
-        
-        return state
-    
-    async def _scrape_website_task(self, state: CompanyState) -> CompanyState:
-        """Scrape content directly from the company website."""
-        company_url = state["company_url"]
-        
-        try:
-            # Initialize the company scraper
-            scraper = CompanyScraper(company_url, max_pages=10)
-            
-            # Scrape the website
-            logger.info(f"Scraping company website: {company_url}")
-            await scraper.scrape_website()
-            
-            # Get combined content from important pages
-            scraped_content = scraper.get_important_pages_content()
-            
-            # If no important pages were found, try to get all content
-            if not scraped_content:
-                scraped_content = scraper.get_combined_content()
-            
-            # Store the scraped content in the state
-            state["scraped_content"] = scraped_content
-            
-            # Log how many pages were scraped
-            logger.info(f"Successfully scraped {len(scraper.pages_content)} pages from {company_url}")
-            
-        except Exception as e:
-            error_msg = f"Error scraping website {company_url}: {str(e)}"
-            logger.error(error_msg)
-            state["errors"].append(error_msg)
-            state["scraped_content"] = f"Unable to scrape website content: {str(e)}"
         
         return state
     
@@ -274,17 +241,15 @@ class CompanyContextAnalyzer:
         return state
     
     def _analysis_task(self, state: CompanyState) -> CompanyState:
-        """Analyze search results and scraped content to generate company context."""
+        """Analyze search results to generate company context."""
         company_url = state["company_url"]
         search_results = state["search_results"]
-        scraped_content = state.get("scraped_content", "")
         
-        # Check if we have search results or scraped content
+        # Check if we have search results
         has_search_results = len(search_results) > 0
-        has_scraped_content = scraped_content and len(scraped_content) > 100  # At least 100 chars
         
-        if not has_search_results and not has_scraped_content:
-            state["errors"].append("No search results or website content available for analysis")
+        if not has_search_results:
+            state["errors"].append("No search results available for analysis")
             state["company_context"] = {
                 "name": "Unknown",
                 "description": f"Unable to analyze company at {company_url}. No data found.",
@@ -316,21 +281,8 @@ class CompanyContextAnalyzer:
                     results_text += f"Result {i+1}: {title}\n"
                     results_text += f"Content: {content[:500]}...\n\n"
         
-        # Prepare scraped content for prompt (if available)
-        scraped_content_text = ""
-        if has_scraped_content:
-            # Limit to a reasonable size to avoid context window issues
-            scraped_content_preview = scraped_content[:10000] if len(scraped_content) > 10000 else scraped_content
-            scraped_content_text = f"\nWebsite Content:\n{scraped_content_preview}\n\n"
-        
         # Create analysis prompt - completely avoid f-strings with conditionals containing newlines
-        search_results_section = ""
-        if has_search_results:
-            search_results_section = "\nSearch Results:\n" + results_text
-            
-        website_content_section = ""
-        if has_scraped_content:
-            website_content_section = "\nWebsite Content:\n" + scraped_content_text
+        search_results_section = "\nSearch Results:\n" + results_text
         
         # Check if we already have a user-specified target geography
         user_geography = None
@@ -354,9 +306,8 @@ class CompanyContextAnalyzer:
         4. Identify who ACTUALLY buys from them and why
         5. Determine WHERE they operate and how problems/solutions differ by region{user_geography_note}
 {search_results_section}
-{website_content_section}
         
-        You're going to use the Route-Ruin-Multiply framework to create a KILLER sales-oriented company profile. Take time to THINK STEP BY STEP through:
+        Based on the search results above, you're going to use the Route-Ruin-Multiply framework to create a KILLER sales-oriented company profile. Take time to THINK STEP BY STEP through:
         
         1. PAINS & SOLUTIONS: Identify 3-4 SPECIFIC pain points this company claims to solve. Not vague marketing speak - the actual business problems their customers have that keep decision-makers up at night. Pair each pain with how they specifically claim to solve it.
         
@@ -408,12 +359,7 @@ class CompanyContextAnalyzer:
                 "description": response.content.strip(),
                 "url": company_url,
                 "target_geography": target_geography,
-                "has_scraped_content": has_scraped_content
             }
-            
-            # If we have scraped content, add a preview to the context
-            if has_scraped_content:
-                state["company_context"]["website_content"] = scraped_content
             
         except Exception as e:
             error_msg = f"Error in analysis: {str(e)}"
@@ -472,13 +418,11 @@ class CompanyContextAnalyzer:
         
         # Add nodes for each task
         workflow.add_node("planning", self._planning_task)
-        workflow.add_node("scrape_website", self._scrape_website_task)
         workflow.add_node("search", self._search_task)
         workflow.add_node("analysis", self._analysis_task)
         
         # Define the edges to create a more comprehensive flow
-        workflow.add_edge("planning", "scrape_website")
-        workflow.add_edge("scrape_website", "search")
+        workflow.add_edge("planning", "search")
         workflow.add_edge("search", "analysis")
         workflow.add_edge("analysis", END)
         
@@ -509,7 +453,6 @@ class CompanyContextAnalyzer:
                 "company_url": company_url,
                 "search_queries": [],
                 "search_results": [],
-                "scraped_content": None,
                 "company_context": None,
                 "errors": [],
                 "complete": False
@@ -591,7 +534,7 @@ class CompanyContextAnalyzer:
             return error_context
 
 # Function for integration with the main application
-async def analyze_company_context(company_url: str, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta", target_geography: str = None) -> Dict[str, Any]:
+async def analyze_company_context(company_url: str, model_name: str = "anthropic/claude-3.5-sonnet-20241022:beta", target_geography: str = None) -> Dict[str, Any]:
     """
     Analyze a company based on its website URL.
     
@@ -628,7 +571,7 @@ async def analyze_company_context(company_url: str, model_name: str = "anthropic
         if target_geography:
             logger.info(f"Analysis will include user-specified target geography: '{target_geography}'")
         
-        # Analyze the company
+        # Analyze the company using search-based approach (no scraping)
         company_context = await analyzer.analyze_company(company_url, target_geography)
         
         # If user provided a target geography, override the detected one
