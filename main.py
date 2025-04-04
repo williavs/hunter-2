@@ -691,25 +691,30 @@ if uploaded_file is not None:
             # Add a slider to control how many rows to analyze when processing is complete
             if st.session_state.processing_complete:
                 total_rows = len(df)
-                max_rows_to_analyze = st.slider(
-                    "Number of rows to analyze:",
-                    min_value=1,
-                    max_value=total_rows,
-                    value=min(total_rows, 10),  # Default to 10 rows or total if less
-                    step=1,
-                    key="max_rows_slider"
-                )
-                st.info(f"Will analyze {max_rows_to_analyze} out of {total_rows} rows. Adjust slider to control costs and processing time.")
+                
+                # Handle case when there are no rows or only one row
+                if total_rows <= 0:
+                    st.warning("No rows available to analyze. Please upload data with valid website URLs.")
+                else:
+                    max_rows_to_analyze = st.slider(
+                        "Number of rows to analyze:",
+                        min_value=1,
+                        max_value=max(1, total_rows),  # Ensure max_value is at least 1
+                        value=min(total_rows, 10),     # Default to 10 rows or total if less
+                        step=1,
+                        key="max_rows_slider"
+                    )
+                    st.info(f"Will analyze {max_rows_to_analyze} out of {total_rows} rows. Adjust slider to control costs and processing time.")
             
             analyze_button = st.button(
                 "Analyze Personalities", 
-                disabled=not st.session_state.processing_complete,
+                disabled=not st.session_state.processing_complete or len(df) <= 0,  # Disable if no rows
                 key="analyze_personalities_button"
             )
             
             if analyze_button:
-                # Get the number of rows to analyze from the slider
-                max_rows = st.session_state.get("max_rows_slider", len(df))
+                # Get the number of rows to analyze from the slider, ensure it's at least 1
+                max_rows = min(st.session_state.get("max_rows_slider", 1), max(1, len(df)))
                 
                 # Limit the dataframe to the selected number of rows
                 analysis_df = df.head(max_rows)
