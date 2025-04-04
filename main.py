@@ -524,6 +524,26 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
 if "df" not in st.session_state:
     st.session_state.df = None
 
+# Initialize the website_column variable in the session state if it doesn't exist yet
+if "website_column" not in st.session_state:
+    st.session_state.website_column = None
+
+# Initialize other commonly used session state variables
+if "name_column" not in st.session_state:
+    st.session_state.name_column = None
+if "processing_complete" not in st.session_state:
+    st.session_state.processing_complete = False
+if "personality_analysis_complete" not in st.session_state:
+    st.session_state.personality_analysis_complete = False
+if "scraped_df" not in st.session_state:
+    st.session_state.scraped_df = None
+if "show_mapping_dialog" not in st.session_state:
+    st.session_state.show_mapping_dialog = False
+if "has_combined_names" not in st.session_state:
+    st.session_state.has_combined_names = False
+if "company_context" not in st.session_state:
+    st.session_state.company_context = {}
+
 # File upload section
 uploaded_file = st.file_uploader("Step 2. Upload your contact CSV file", type="csv")
 
