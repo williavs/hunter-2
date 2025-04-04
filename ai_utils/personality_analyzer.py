@@ -952,17 +952,9 @@ async def analyze_personality(df: pd.DataFrame, model_name: str = "anthropic/cla
                     
                     # Update the row with analysis results
                     result_df.at[idx, 'personality_analysis'] = analysis_result.personality_analysis
-                    result_df.at[idx, 'conversation_style'] = analysis_result.conversation_style
+                   
                     
-                    # Ensure professional_interests is a list of strings before joining
-                    interests = analysis_result.professional_interests
-                    if isinstance(interests, list):
-                        # Make sure all items are strings
-                        interests = [str(item) for item in interests]
-                        result_df.at[idx, 'professional_interests'] = ', '.join(interests)
-                    else:
-                        # Handle case where it's not a list
-                        result_df.at[idx, 'professional_interests'] = str(interests)
+                    
                 else:
                     # Log that we couldn't find a matching row
                     logger.warning(f"No matching row found for contact ID: {contact_id}")

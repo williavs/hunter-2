@@ -104,6 +104,10 @@ class SPEAREmailGenerator:
         8. Avoid traditional email structure and formality
         9. Use short, punchy sentences with minimal fluff
         10. Each email should be 3 sentences maximum
+
+        IMPORTANT: NOBODY CARES ABOUT WHAT THE SELLING COMPANY DOES. THEY ONLY CARE ABOUT WHAT THEY CAN DO FOR THEIR PROBLEMS. WHEN POSSIBLE EMAILS SHOW PROSPECTS WHAT THEY CAN DO WITH WHAT THEY CAN DO SELLERS PRODUCT. 
+
+        IMPORTANT: NEVER FOCUS ON SELLING COMPANY OR SELLING COMPANY FEATURES, NO FEATURE DUMPING EVER. 
         
         IMPORTANT: Only use the provided case studies for social proof examples. DO NOT invent or hallucinate customer stories, companies, or metrics. If no case studies are provided, use generic statements without naming specific companies.
         
@@ -114,7 +118,7 @@ class SPEAREmailGenerator:
         {
           "emailbody1": "Social proof email focusing on similar customers who have succeeded with our product",
           "emailbody2": "Business pain/fear email emphasizing risks or opportunity costs",
-          "emailbody3": "Innovation/differentiation email highlighting unique capabilities",
+          "emailbody3": "Innovation/differentiation email highlighting unique capabilities (IMPORTANT: THIS IS NOT A FEATURE DUMP, IT SHOULD FOCUS ON THE BUYING COMPANY, NOT THE SELLING COMPANY)",
           "emailbody4": "ROI/metrics email focusing on specific business outcomes with precise numbers"
         }
         
@@ -138,7 +142,7 @@ class SPEAREmailGenerator:
         The four required emails are:
         1. Social Proof Email: Highlight similar customers who've succeeded with our product. ONLY reference companies and metrics from the provided case studies.
         2. Business Pain/Fear Email: Emphasize risks or opportunity costs of not acting
-        3. Innovation/Differentiation Email: Showcase unique capabilities competitors don't have
+        3. Innovation/Differentiation Email: Showcase unique capabilities competitors don't have(IMPORTANT: THIS IS NOT A FEATURE DUMP, IT SHOULD FOCUS ON THE BUYING COMPANY, NOT THE SELLING COMPANY)
         4. ROI/Metrics Email: Focus on specific business outcomes with precise numbers
         
         Remember to follow JMM principles: painfully short (max 3 sentences), precise metrics (32.6% not 30%), compressed format, and no pleasantries.
@@ -148,9 +152,15 @@ class SPEAREmailGenerator:
         {{
           "emailbody1": "Your social proof email text here",
           "emailbody2": "Your business pain/fear email text here",
-          "emailbody3": "Your innovation/differentiation email text here",
+          "emailbody3": "Your innovation/differentiation email text here ",
           "emailbody4": "Your ROI/metrics email text here"
         }}
+
+
+        IMPORTANT: NOBODY CARES ABOUT WHAT THE SELLING COMPANY DOES. THEY ONLY CARE ABOUT WHAT THEY CAN DO FOR THEIR PROBLEMS. WHEN POSSIBLE EMAILS SHOW PROSPECTS WHAT THEY CAN DO WITH WHAT THEY CAN DO SELLERS PRODUCT. 
+
+        IMPORTANT: NEVER FOCUS ON SELLING COMPANY OR SELLING COMPANY FEATURES, NO FEATURE DUMPING EVER. 
+        
         
         Don't add any explanations, markdown formatting, or extra text before or after the JSON. 
         Make sure all JSON keys and string values use double quotes.

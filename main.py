@@ -16,6 +16,8 @@ from utils.company_scraper import company_scraper_dialog, CompanyScraper
 from utils.data_helpers import load_csv_data, get_download_link, has_name_components
 # Import API utilities
 from utils.api_utils import test_api_keys
+# Import URL sanitizer
+from utils.url_sanitizer import sanitize_dataframe_urls, sanitize_url
 
 import os
 from dotenv import load_dotenv
@@ -557,6 +559,15 @@ if uploaded_file is not None:
                 st.info("We detected separate first and last name columns in your CSV. You'll be able to combine them in the next step.")
                 st.session_state.has_combined_names = True
             
+            # Guess the website column
+            website_col = guess_website_column(df)
+            
+            # Sanitize URLs in the website column
+            if website_col in df.columns:
+                df, cleaned_count = sanitize_dataframe_urls(df, website_col)
+                if cleaned_count > 0:
+                    st.success(f"✅ Sanitized {cleaned_count} URLs in your data to ensure proper formatting.")
+            
             st.session_state.df = df
             # Also store in permanent session state with p_ prefix
             st.session_state.p_df = df.copy()
@@ -774,11 +785,22 @@ if uploaded_file is not None:
                             st.session_state.p_df = full_df.copy()
                             st.session_state.personality_analysis_complete = True
                             st.success(f"Successfully analyzed personalities for {analyzed_count} contacts!")
+                            st.success("Proceed to the Spear page to write emails.")
+                        
                             st.rerun()
+            
         
         # Download section
         st.subheader("Download Data")
         st.markdown(f'<a href="{get_download_link(df)}" download="enriched_contacts.csv" class="button">Download CSV</a>', unsafe_allow_html=True)
+
+# Add a button to navigate to the SPEAR page
+st.markdown("---")
+st.subheader("Next Steps")
+if st.button("Generate emails for contacts", use_container_width=True):
+    # Navigate to the SPEAR page
+    import streamlit as st
+    st.switch_page("spear.py")
 
 # Keep our permanent session vars at the top of the app
 keep_permanent_session_vars()

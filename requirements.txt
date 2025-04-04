@@ -16,3 +16,5 @@ python-dotenv
 pymupdf
 matplotlib
 networkx
+altair
+seaborn

@@ -28,6 +28,7 @@ st.sidebar.markdown(":grey[DEEP SALES INTELLIGENCE]")
 # Define the pages for navigation
 pages = {
     "Tools": [
+        st.Page("what.py", title="WHAT?"),
         st.Page("main.py", title="HUNTER"),
         st.Page("spear.py", title="SPEAR"),
     ],
@@ -35,6 +36,7 @@ pages = {
         st.Page("about.py", title="@V3Consult"),
         st.Page("honeybadger_strategies.py", title="Honey Badger -JMM"),
         st.Page("methodology.py", title="For the AI Nerds"),
+        st.Page("enriched_data_guide.py", title="How to Use the Enriched Data")
     ],
 }
 

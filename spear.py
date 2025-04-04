@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import asyncio
 from ai_utils.spear_email_generator import generate_spear_emails
+import re
 
 
 # Helper function to keep session state variables permanent
@@ -9,7 +10,7 @@ def keep_permanent_session_vars():
     """Prevents Streamlit from clearing session state variables with p_ prefix"""
     for key in list(st.session_state.keys()):
         if key.startswith("p_"):
-            if key not in ["p_spear_df", "p_selected_rows", "p_generating_emails", "p_email_generation_complete", "p_case_studies", "p_dismissed_case_studies_dialog"]:
+            if key not in ["p_spear_df", "p_selected_rows", "p_generating_emails", "p_email_generation_complete", "p_case_studies", "p_dismissed_case_studies_dialog", "p_show_download_dialog"]:
                 st.session_state["p_" + key] = st.session_state[key]
 
 # Initialize persistent session state variables
@@ -30,6 +31,9 @@ if "p_case_studies" not in st.session_state:
     
 if "p_dismissed_case_studies_dialog" not in st.session_state:
     st.session_state.p_dismissed_case_studies_dialog = False
+
+if "p_show_download_dialog" not in st.session_state:
+    st.session_state.p_show_download_dialog = False
 
 
 @st.dialog("Add Case Studies")
@@ -58,6 +62,100 @@ def show_case_studies_dialog():
             st.rerun()
 
 
+@st.dialog("Customize and Download Data", width="large")
+def show_download_dialog():
+    """Dialog for customizing columns and file name before download."""
+    st.write("### Customize Your Export")
+    st.write("Rename columns and set your file name before downloading.")
+    
+    # Get the dataframe to download
+    df = st.session_state.p_spear_df.copy()
+    
+    # Create input for file name
+    default_filename = "spear_data.csv"
+    if "download_filename" in st.session_state:
+        default_filename = st.session_state.download_filename
+    
+    filename = st.text_input(
+        "File name:", 
+        value=default_filename,
+        key="download_filename"
+    )
+    
+    # Add .csv extension if not present
+    if not filename.lower().endswith('.csv'):
+        filename += '.csv'
+    
+    # Create a section for column renaming
+    st.write("### Column Names")
+    st.write("Rename your columns below (leave blank to keep original name):")
+    
+    # Store column mapping in session state
+    if "column_mapping" not in st.session_state:
+        st.session_state.column_mapping = {col: col for col in df.columns}
+    
+    # Create a dictionary to store new column names
+    col_mappings = {}
+    
+    # Create four columns for the inputs to save space
+    col1, col2, col3, col4 = st.columns(4)
+    columns = [col1, col2, col3, col4]
+    
+    # Organize columns into four groups
+    cols = list(df.columns)
+    group_size = len(cols) // 4 + (1 if len(cols) % 4 > 0 else 0)
+    
+    # Distribute columns across the four column groups
+    for i, col in enumerate(cols):
+        group_idx = i // group_size  # Determine which group this column belongs to
+        if group_idx >= 4:  # If we somehow have more groups than columns, cap at 3 (0-indexed)
+            group_idx = 3
+            
+        with columns[group_idx]:
+            default_value = st.session_state.column_mapping.get(col, col)
+            new_name = st.text_input(
+                f"'{col}':", 
+                value=default_value,
+                key=f"col_rename_{i}"
+            )
+            col_mappings[col] = new_name if new_name else col
+    
+    # Update session state with new mappings
+    st.session_state.column_mapping = col_mappings
+    
+    # Preview section
+    with st.expander("Preview Changes", expanded=False):
+        preview_df = df.copy()
+        # Rename columns based on the mapping
+        preview_df.columns = [col_mappings.get(col, col) for col in preview_df.columns]
+        st.dataframe(preview_df.head(3), use_container_width=True)
+    
+    # Download buttons
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("Download", key="confirm_download_btn", use_container_width=True):
+            # Create a new dataframe with renamed columns
+            download_df = df.copy()
+            download_df.columns = [col_mappings.get(col, col) for col in download_df.columns]
+            
+            # Convert to CSV
+            csv_data = download_df.to_csv(index=False)
+            
+            # Store in session state for the download button
+            st.session_state.download_csv_data = csv_data
+            st.session_state.download_csv_filename = filename
+            
+            # Close dialog and trigger download
+            st.session_state.p_show_download_dialog = False
+            st.rerun()
+    
+    with col2:
+        if st.button("Cancel", key="cancel_download_btn", use_container_width=True):
+            st.session_state.p_show_download_dialog = False
+            st.rerun()
+
+
 def show_spear_page():
     # Call our helper to keep permanent vars
     keep_permanent_session_vars()
@@ -65,6 +163,10 @@ def show_spear_page():
     # Show the case studies dialog if needed
     if not st.session_state.p_case_studies and not st.session_state.p_dismissed_case_studies_dialog:
         show_case_studies_dialog()
+    
+    # Show the download dialog if triggered
+    if st.session_state.p_show_download_dialog:
+        show_download_dialog()
     
     # Ensure data persistence across page navigation
     # Check if we need to grab data from the main app
@@ -300,15 +402,29 @@ def show_spear_page():
         
         # Download button for the current dataframe
         st.write("### Download Data")
-        csv = st.session_state.p_spear_df.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="spear_data.csv",
-            mime="text/csv",
-            key="spear_download_btn",
-            use_container_width=True
-        )
+        
+        # Check if we have data to download after dialog
+        if "download_csv_data" in st.session_state and "download_csv_filename" in st.session_state:
+            st.download_button(
+                label="Download Customized CSV",
+                data=st.session_state.download_csv_data,
+                file_name=st.session_state.download_csv_filename,
+                mime="text/csv",
+                key="download_customized_btn",
+                use_container_width=True
+            )
+            # Clear the data after download to prevent re-downloading
+            if st.button("Reset Download", key="reset_download_btn"):
+                if "download_csv_data" in st.session_state:
+                    del st.session_state.download_csv_data
+                if "download_csv_filename" in st.session_state:
+                    del st.session_state.download_csv_filename
+                st.rerun()
+        else:
+            # Show the customize button
+            if st.button("Customize and Download CSV", key="customize_download_btn", use_container_width=True):
+                st.session_state.p_show_download_dialog = True
+                st.rerun()
 
 
 show_spear_page() 

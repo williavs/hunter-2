@@ -9,6 +9,7 @@ import urllib3
 import streamlit as st
 from bs4 import BeautifulSoup
 from rapidfuzz import process, fuzz
+from utils.url_sanitizer import sanitize_dataframe_urls, sanitize_url
 
 # Suppress InsecureRequestWarning messages
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -149,6 +150,12 @@ def website_mapping_dialog(df):
             st.error(f"Name column '{name_column}' not found in the data.")
             return
         
+        # Sanitize URLs in the website column before scraping
+        if website_column in df.columns:
+            df, cleaned_count = sanitize_dataframe_urls(df, website_column)
+            if cleaned_count > 0:
+                st.success(f"✅ Sanitized {cleaned_count} URLs to ensure proper formatting.")
+        
         # Trigger scraping
         with st.spinner("Scraping websites. This might take a while..."):
             result_df = process_websites_parallel(
@@ -156,6 +163,7 @@ def website_mapping_dialog(df):
                 website_column, 
                 max_workers=max_workers,
                 timeout=timeout,
+                extract_links=extract_links,
                 max_content_length=max_content_length
             )
             
@@ -339,73 +347,192 @@ def scrape_website(url, timeout=10, max_content_length=50000):
     except Exception as e:
         return f"Error processing website: {str(e)}", []
 
-def process_websites_parallel(df, website_column, max_workers=10, timeout=10, max_content_length=50000):
+def fetch_website_content(url, timeout=10, extract_links=True, max_content_length=50000):
     """
-    Process all websites in the dataframe in parallel
+    Fetch content from a website URL and extract text/links.
     
     Args:
-        df: Pandas DataFrame containing website URLs
-        website_column: Column name containing website URLs
-        max_workers: Maximum number of parallel workers
+        url: The URL to scrape
         timeout: Request timeout in seconds
-        max_content_length: Maximum content length to process
+        extract_links: Whether to extract links
+        max_content_length: Maximum content length to extract
         
     Returns:
-        DataFrame with added 'website_content' and 'website_links' columns
+        tuple: (text_content, links)
     """
-    if website_column not in df.columns:
-        raise ValueError(f"Column '{website_column}' not found in dataframe")
+    try:
+        # Check if URL is valid
+        if not url:
+            return "No URL provided", []
+        
+        # Add http:// if missing
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+            
+        # Create a session for requests
+        session = requests.Session()
+        
+        # Set a user agent to mimic a browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Make the request with a timeout
+        response = session.get(
+            url,
+            headers=headers,
+            timeout=timeout,
+            verify=False  # Disable SSL verification
+        )
+        
+        # Check if request was successful
+        response.raise_for_status()
+        
+        # Get content type
+        content_type = response.headers.get('Content-Type', '').lower()
+        
+        # Skip non-HTML content
+        if 'text/html' not in content_type:
+            return f"Skipped: Content type is {content_type}", []
+        
+        # Get the HTML content
+        html_content = response.text
+        
+        # Limit content size
+        if max_content_length > 0 and len(html_content) > max_content_length:
+            html_content = html_content[:max_content_length]
+        
+        # Convert HTML to text
+        h2t.ignore_links = not extract_links
+        text_content = h2t.handle(html_content).strip()
+        
+        # Extract links if requested
+        links = []
+        if extract_links:
+            try:
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+                # Find all links
+                for link in soup.find_all('a', href=True):
+                    href = link['href']
+                    
+                    # Skip empty links
+                    if not href:
+                        continue
+                        
+                    # Skip anchors and javascript
+                    if href.startswith('#') or href.startswith('javascript:'):
+                        continue
+                        
+                    # Add the link
+                    links.append(href)
+            except Exception as e:
+                # If link extraction fails, continue with content
+                pass
+        
+        # Clean up the text content
+        text_content = ' '.join(text_content.split())
+        
+        return text_content, links
+        
+    except requests.exceptions.RequestException as e:
+        return f"Error: {str(e)}", []
+    except Exception as e:
+        return f"Error: {str(e)}", []
+
+def process_websites_parallel(df, website_column, max_workers=20, timeout=10, extract_links=True, max_content_length=50000):
+    """
+    Process multiple websites in parallel for a DataFrame of contact information.
     
-    # Create a copy of the dataframe to avoid modifying the original
+    Args:
+        df: DataFrame containing contact information and website URLs
+        website_column: Name of column containing website URLs
+        max_workers: Maximum number of parallel workers
+        timeout: Request timeout in seconds
+        extract_links: Whether to extract links from website content
+        max_content_length: Maximum content length to extract
+        
+    Returns:
+        DataFrame: Updated DataFrame with website content and extracted links
+    """
+    # Ensure required columns exist
     result_df = df.copy()
     
-    # Get the list of URLs to process
-    urls = df[website_column].tolist()
+    if website_column not in result_df.columns:
+        return result_df
     
-    # Create a list to store results
-    results = []
+    # Add columns for website content and links if they don't exist
+    if 'website_content' not in result_df.columns:
+        result_df['website_content'] = ""
+    if 'website_links' not in result_df.columns:
+        result_df['website_links'] = ""
     
-    logger.info(f"Starting to process {len(urls)} websites with {max_workers} parallel workers")
-    
-    # Create a progress bar placeholder in Streamlit
+    # Create a progress bar
+    total_rows = len(result_df)
     progress_bar = st.progress(0)
+    
+    # Display count
     status_text = st.empty()
+    status_text.text(f"Processing 0 of {total_rows} websites...")
     
     # Use ThreadPoolExecutor for parallel processing
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks and store futures
-        future_to_url = {executor.submit(scrape_website, url, timeout, max_content_length): i 
-                         for i, url in enumerate(urls)}
+        # List to store futures and their corresponding row indices
+        futures = []
         
-        # Process results as they complete
+        # Create a task for each row in the dataframe
+        for index, row in result_df.iterrows():
+            # Get the website URL, clean it with the sanitizer
+            website_url = row[website_column]
+            if pd.isna(website_url) or website_url == "":
+                # Skip empty URLs
+                continue
+            
+            # Use our sanitize_url function to clean the URL
+            clean_url = sanitize_url(website_url)
+            
+            if not clean_url:
+                # If sanitize_url returned an empty string, the URL was invalid
+                result_df.at[index, 'website_content'] = "Error: Invalid URL format"
+                continue
+                
+            # Submit the task to the executor
+            future = executor.submit(
+                fetch_website_content, 
+                clean_url, 
+                timeout, 
+                extract_links,
+                max_content_length
+            )
+            
+            # Store the future and row index
+            futures.append((future, index))
+        
+        # Process completed futures as they complete
         completed = 0
-        total = len(future_to_url)
-        
-        for future in concurrent.futures.as_completed(future_to_url):
-            idx = future_to_url[future]
+        for future, index in futures:
             try:
+                # Get the result when available
                 content, links = future.result()
-                results.append((idx, content, links))
+                
+                # Update the dataframe with the results
+                result_df.at[index, 'website_content'] = content
+                result_df.at[index, 'website_links'] = links
             except Exception as e:
-                logger.error(f"Error processing URL at index {idx}: {str(e)}")
-                results.append((idx, f"Error: {str(e)}", []))
+                # Handle any exceptions that occurred during processing
+                result_df.at[index, 'website_content'] = f"Error: {str(e)}"
+                result_df.at[index, 'website_links'] = ""
             
             # Update progress
             completed += 1
-            progress_bar.progress(completed / total)
-            status_text.text(f"Processing websites: {completed}/{total}")
+            progress_bar.progress(completed / total_rows)
+            status_text.text(f"Processing {completed} of {total_rows} websites...")
     
-    # Clear the status text
-    status_text.empty()
+    # Complete progress bar
+    progress_bar.progress(1.0)
+    status_text.text(f"Completed processing {completed} websites.")
     
-    # Sort results by original index
-    results.sort(key=lambda x: x[0])
-    
-    # Add results as new columns
-    result_df['website_content'] = [r[1] for r in results]
-    result_df['website_links'] = [', '.join(r[2]) if r[2] else "" for r in results]
-    
-    logger.info(f"Completed processing {len(urls)} websites")
     return result_df
 
 if __name__ == "__main__":
