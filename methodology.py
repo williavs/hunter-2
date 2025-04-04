@@ -450,5 +450,8 @@ workflow.set_entry_point("planning")
         """)
 
 # This ensures the page content is displayed when loaded through navigation
-if __name__ != "__main__":
+if __name__ == "__main__":
+    show_methodology_page()
+else:
+    # When loaded through streamlit navigation
     show_methodology_page() 
