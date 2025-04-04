@@ -18,29 +18,19 @@ from utils.data_helpers import load_csv_data, get_download_link, has_name_compon
 from utils.api_utils import test_api_keys
 
 import os
-import logging
 from dotenv import load_dotenv
 import requests
-from utils.logging_config import configure_logging, configure_langsmith_tracing
-
-# Use the centralized logging configuration
-logger = logging.getLogger(__name__)
+from utils.logging_config import configure_langsmith_tracing
 
 # Load environment variables from .env file
-logger.info("Loading environment variables from .env file")
 load_dotenv()
 
 # Configure LangSmith tracing if API key is available
 configure_langsmith_tracing()
 
-# Log environment variable status (without exposing full keys)
+# Get API keys
 openrouter_key = os.environ.get("OPENROUTER_API_KEY")
 tavily_key = os.environ.get("TAVILY_API_KEY")
-logger.info(f"OPENROUTER_API_KEY loaded: {'Yes' if openrouter_key else 'No'}")
-if openrouter_key:
-    logger.debug(f"OPENROUTER_API_KEY starts with: {openrouter_key[:10]}...")
-    logger.debug(f"OPENROUTER_API_KEY length: {len(openrouter_key)}")
-logger.info(f"TAVILY_API_KEY loaded: {'Yes' if tavily_key else 'No'}")
 
 # Define the fixed model name
 FIXED_MODEL = "anthropic/claude-3.7-sonnet"
@@ -109,19 +99,17 @@ async def run_personality_analysis(df, company_context=None):
     """Run personality analysis in async context"""
     # Make sure we have the correct name column information
     name_column = st.session_state.name_column
-    logger.debug(f"Using name column: {name_column}")
     
     # If we have combined first and last names, make sure the full_name column exists
     if st.session_state.get("has_combined_names", False) and "full_name" in df.columns:
-        logger.debug("Using combined first and last names in 'full_name' column")
         # The full_name column is already in the DataFrame
+        pass
     elif st.session_state.get("website_mapping", {}).get("has_separate_names", False):
         # We need to combine first and last names
         first_name_column = st.session_state.website_mapping.get("first_name_column")
         last_name_column = st.session_state.website_mapping.get("last_name_column")
         
         if first_name_column and last_name_column and first_name_column in df.columns and last_name_column in df.columns:
-            logger.debug(f"Combining first name column '{first_name_column}' and last name column '{last_name_column}'")
             # Create a copy of the dataframe
             df = df.copy()
             
@@ -143,13 +131,11 @@ async def run_personality_analysis(df, company_context=None):
         # Check for API keys
         openrouter_key = os.environ.get("OPENROUTER_API_KEY")
         if not openrouter_key:
-            logger.error("OpenRouter API key not found")
             st.error("OpenRouter API key not found. Please set it in the API Keys Configuration section.")
             return df
         
         tavily_key = os.environ.get("TAVILY_API_KEY")
         if not tavily_key:
-            logger.error("Tavily API key not found")
             st.error("Tavily API key not found. Please set it in the API Keys Configuration section.")
             return df
         
@@ -184,13 +170,11 @@ async def run_personality_analysis(df, company_context=None):
                 result_df['company_context'] = f"{company_name}: {company_desc}"
             
         except Exception as e:
-            logger.error(f"Error in analyze_personality: {str(e)}")
             st.error(f"An error occurred during personality analysis: {str(e)}")
             
         return result_df
         
     except Exception as e:
-        logger.error(f"Error during personality analysis setup: {str(e)}")
         st.error(f"An error occurred during personality analysis: {str(e)}")
         return df
 
@@ -233,12 +217,6 @@ if not openrouter_key or not tavily_key:
                 
                 os.environ["OPENROUTER_API_KEY"] = openrouter_api_key
                 os.environ["TAVILY_API_KEY"] = tavily_api_key
-                
-                # Log key information (safely)
-                if openrouter_api_key:
-                    key_preview = openrouter_api_key[:8] + "..." if len(openrouter_api_key) > 8 else "[empty]"
-                    logger.debug(f"Saved OpenRouter API key (first chars): {key_preview}")
-                    logger.debug(f"OpenRouter API key length: {len(openrouter_api_key)}")
                 
                 st.success("API keys saved for this session!")
         
@@ -337,7 +315,6 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                 
                 # Add target geography to the context
                 if target_geography:
-                    logger.info(f"Setting user-specified target geography: '{target_geography}'")
                     st.session_state.company_context["target_geography"] = target_geography
                 
                 # Update progress
@@ -345,7 +322,6 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                 status_text.text("Running company analysis...")
                 
                 # Run the company analysis
-                logger.info(f"Calling analyze_company_context with target_geography: '{target_geography}'")
                 try:
                     company_context = asyncio.run(analyze_company_context(
                         company_url, 
@@ -359,14 +335,12 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                     
                     # Check if we got a valid dictionary back
                     if not isinstance(company_context, dict):
-                        logger.error(f"Invalid company_context returned: {type(company_context)}")
                         st.error(f"Error analyzing company: Invalid response format")
                         # Use what we have in session state as a fallback
                         company_context = st.session_state.company_context
                     
                     # Check if there's an error field in the context
                     if "error" in company_context:
-                        logger.warning(f"Company analysis returned with error: {company_context.get('error')}")
                         st.warning(f"Company analysis completed with warning: {company_context.get('description')}")
                     
                     if company_context:
@@ -375,17 +349,13 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                         
                         # Preserve the user-specified target geography if provided
                         user_geography = st.session_state.company_context.get("target_geography", "")
-                        logger.info(f"Current target geography in session state: '{user_geography}'")
                         
                         # Update with the analyzed context
                         st.session_state.company_context = company_context
                         
                         # Override the detected geography with user-specified if available
                         if user_geography:
-                            logger.info(f"Preserving user-specified target geography: '{user_geography}'")
                             st.session_state.company_context["target_geography"] = user_geography
-                            
-                        logger.info(f"Final target geography in context: '{st.session_state.company_context.get('target_geography', 'Unknown')}'")
                         
                         # Mark context as not approved yet
                         st.session_state.context_approved = False
@@ -396,12 +366,9 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                     else:
                         st.error("Unable to analyze company website. Please try again.")
                 except Exception as e:
-                    logger.error(f"Error in company analysis: {str(e)}")
-                    logger.exception("Detailed exception:")
-                    st.error(f"Error analyzing company: {str(e)}")
+                    st.error(f"Error in company analysis: {str(e)}")
             except Exception as e:
-                logger.error(f"Error in analysis process: {str(e)}")
-                st.error(f"An error occurred: {str(e)}")
+                st.error(f"Error in analysis process: {str(e)}")
             finally:
                 # Clean up progress indicators
                 try:
@@ -469,7 +436,6 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                         else:
                             st.error("Failed to adjust context. Please try again or adjust manually.")
                     except Exception as e:
-                        logger.error(f"Error adjusting context: {str(e)}")
                         st.error(f"Error adjusting context: {str(e)}")
         
         # Approval button
@@ -553,6 +519,10 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                 st.rerun()
             else:
                 st.error("Please enter a company description.")
+
+# Initialize the df variable in the session state if it doesn't exist yet
+if "df" not in st.session_state:
+    st.session_state.df = None
 
 # File upload section
 uploaded_file = st.file_uploader("Step 2. Upload your contact CSV file", type="csv")
@@ -735,63 +705,51 @@ if uploaded_file is not None:
                 tavily_key = os.environ.get("TAVILY_API_KEY")
                 
                 if not openrouter_key or not tavily_key:
-                    logger.error(f"API keys missing: OpenRouter={'Missing' if not openrouter_key else 'Present'}, Tavily={'Missing' if not tavily_key else 'Present'}")
                     st.error("Please set your OpenRouter and Tavily API keys in the API Keys Configuration section.")
                 # Ensure name column is set
                 elif not st.session_state.name_column:
                     st.error("Please select a name column in the Website Mapping Dialog first.")
                 else:
-                    logger.debug("API keys are present, starting personality analysis with OpenRouter")
-                    
                     # Get company context if available
                     company_context = st.session_state.get("company_context", None)
                     context_approved = st.session_state.get("context_approved", False)
                     
-                    if company_context:
-                        # Check if context is approved
-                        if not context_approved:
-                            st.warning("⚠️ Your company context has not been approved yet. Please go to the Company Context Configuration section and approve it first.")
-                            # Disable the analysis button
-                            st.stop()
-                            
-                        # Check if we have website content
-                        has_website_content = "website_content" in company_context and company_context["website_content"]
-                        if has_website_content:
-                            logger.info(f"Using company context with website content for analysis: {company_context['name']}")
-                            content_length = len(company_context["website_content"])
-                            approx_pages = max(1, content_length // 5000)  # Rough estimate of page count
-                            st.info(f"Using enhanced company context with website content (~{approx_pages} pages) for more personalized analysis.")
-                        else:
-                            logger.info(f"Using company context for analysis: {company_context['name']}")
+                    # Check if company context exists and is approved
+                    if not context_approved:
+                        st.warning("Please approve your company context in Step 1 before analyzing personalities.")
+                        st.info("If you've already set up your company context, click 'Approve' to continue.")
                     else:
-                        logger.info("No company context provided for analysis")
-                        st.warning("No company context provided. For more personalized results, add your company information in the Company Context Configuration section.")
-                    
-                    # Run the personality analysis asynchronously with company context
-                    result_df = asyncio.run(run_personality_analysis(analysis_df, company_context=company_context))
-                    
-                    # Merge the results back into the full dataframe
-                    # First, create a copy of the full dataframe
-                    full_df = df.copy()
-                    
-                    # Update only the rows that were analyzed
-                    for idx in result_df.index:
-                        if idx in full_df.index:
-                            full_df.loc[idx, 'personality_analysis'] = result_df.loc[idx, 'personality_analysis']
-                            full_df.loc[idx, 'conversation_style'] = result_df.loc[idx, 'conversation_style']
-                            full_df.loc[idx, 'professional_interests'] = result_df.loc[idx, 'professional_interests']
-                            if 'company_context' in result_df.columns:
-                                full_df.loc[idx, 'company_context'] = result_df.loc[idx, 'company_context']
-                    
-                    # Count how many rows were actually analyzed (have non-empty personality_analysis)
-                    analyzed_count = len(result_df[result_df['personality_analysis'].notna() & (result_df['personality_analysis'] != "")])
-                    
-                    # Save to session state
-                    st.session_state.df = full_df
-                    st.session_state.p_df = full_df.copy()
-                    st.session_state.personality_analysis_complete = True
-                    st.success(f"Successfully analyzed personalities for {analyzed_count} contacts!")
-                    st.rerun()
+                        if company_context and company_context.get("website_content"):
+                            # Use the company context with website content
+                            pass
+                        elif company_context:
+                            # Use the company context without website content
+                            pass
+                        else:
+                            # No company context provided
+                            pass
+                            
+                        # Process personality analysis
+                        with st.spinner(f"Analyzing personalities for {max_rows} contacts..."):
+                            # Run the analysis
+                            full_df = asyncio.run(run_personality_analysis(
+                                df=analysis_df, 
+                                company_context=company_context
+                            ))
+                            
+                            # Get number of contacts successfully analyzed
+                            analyzed_count = sum(1 for _, row in full_df.iterrows() 
+                                               if "personality_analysis" in full_df.columns 
+                                               and pd.notna(row["personality_analysis"]) 
+                                               and row["personality_analysis"].strip() != ""
+                                               and not row["personality_analysis"].strip().startswith("Error"))
+                            
+                            # Update the session state with the full dataframe including analysis
+                            st.session_state.df = full_df
+                            st.session_state.p_df = full_df.copy()
+                            st.session_state.personality_analysis_complete = True
+                            st.success(f"Successfully analyzed personalities for {analyzed_count} contacts!")
+                            st.rerun()
         
         # Download section
         st.subheader("Download Data")
