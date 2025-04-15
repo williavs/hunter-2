@@ -1,31 +1,90 @@
-# Email GTM Wizard - AI-Powered Contact Data Enrichment Tool
+# HUNTER - Deep Sales Intelligence System
 
-A comprehensive Streamlit application for enriching B2B sales outreach with AI-powered personality analysis and targeted insights.
+HUNTER is a sophisticated AI-powered sales intelligence platform designed for B2B sales teams to deeply analyze prospects and generate highly personalized outreach content.
 
-## Overview
+## Project Purpose & Goals
 
-Email GTM Wizard helps sales professionals create highly targeted, personalized outreach by providing in-depth analysis of prospects' personalities, communication preferences, and business challenges. The application leverages AI to structure analyses using the "Route-Ruin-Multiply" (RRM) framework, connecting prospect pain points to your specific solutions.
+HUNTER solves the critical challenge of creating truly personalized sales outreach at scale by:
 
-![Application Screenshot](https://place-holder-for-screenshot.png)
+1. **Analyzing Prospect Personalities**: Using AI to build detailed profiles based on available data
+2. **Contextualizing Business Challenges**: Identifying specific pain points related to your solutions
+3. **Generating Personalized Emails**: Creating highly targeted content using the RRM framework
+4. **Streamlining Workflow**: Integrating with existing sales engagement platforms seamlessly
 
-## Key Features
+## Technical Architecture
 
-- **AI-Powered Personality Analysis**: Generate detailed personality profiles for prospects using Claude 3.5 Haiku via OpenRouter
-- **Company Context Integration**: Enhance analyses with your company's specific value propositions and solutions
-- **Website Content Scraping**: Automatically gather information from prospect websites
-- **Intelligent Name Handling**: Process both combined and separate first/last name fields
-- **Web Search Integration**: Use Tavily search API to gather additional prospect information
-- **Data Editor**: View and modify contact data with inline editing capabilities
-- **Progress Tracking**: Monitor analysis and scraping progress in real-time
-- **Controlled Processing**: Choose how many contacts to analyze to manage costs and processing time
-- **RRM Framework**: Structured analyses that connect prospect pain points to your solutions
+The application follows a multi-agent, workflow-based architecture:
+
+```
+User Input → Data Preprocessing → Search Planning → Web Search → 
+Analysis Orchestration → Personality Analysis → Evaluation → Results
+```
+
+Key components:
+- **Streamlit UI**: Modern, intuitive interface with multi-page navigation
+- **LangGraph Workflow**: Orchestrates the AI agents through a stateful process
+- **Web Scraping**: Extracts content from prospect websites for analysis
+- **OpenAI Web Search**: Uses OpenAI's Responses API with web search capabilities
+- **Email Generation**: Creates multiple email variations using the RRM framework
+
+## Key Technologies & Dependencies
+
+- **Frontend**: [Streamlit](https://streamlit.io/) for UI components and data visualization
+- **Language Models**: [OpenAI GPT-4.1](https://platform.openai.com/docs/models/gpt-4-and-gpt-4-turbo) with web search capabilities
+- **LLM Integration**: [LangChain](https://python.langchain.com/docs/integrations/llms/openai) for model integration
+- **Workflow Orchestration**: [LangGraph](https://python.langchain.com/docs/langgraph) for structured agent interactions
+- **Data Processing**: Pandas for data manipulation
+- **Web Scraping**: BeautifulSoup, html2text, requests
+- **Concurrent Processing**: asyncio for handling multiple analyses
+
+## Core Business Rules
+
+1. **RRM Framework**: All prospect analyses follow the Route-Ruin-Multiply framework:
+   - **Route**: Identify the prospect's primary business objectives
+   - **Ruin**: Pinpoint the challenges preventing those objectives
+   - **Multiply**: Show how your solution addresses these challenges
+
+2. **Company Context Integration**: Your company's services, products, and value propositions are integrated into all analyses
+
+3. **Data Privacy**: All data remains local; scraped information is only used for analysis
+
+4. **User-Controlled Processing**: Users decide how many contacts to analyze to manage costs
+
+## Development Patterns & Conventions
+
+- **Session State Management**: Prefix `p_` for permanent variables that persist across page navigation
+- **Asynchronous Processing**: Concurrent operations for web scraping and AI analysis
+- **Component Separation**: Modular design with specialized components for each function
+- **Error Handling**: Robust error capture and reporting across all operations
+- **Caching**: Search results are cached to reduce API costs and improve performance
+
+## Known Challenges & Solutions
+
+1. **Search Result Processing**: Special handling of search results ensures company mentions are preserved even in truncated content
+2. **API Timeouts**: Extended timeouts (90 seconds) for reliable model responses
+3. **Model Consistency**: Standardized on OpenAI GPT-4.1 across all components
+4. **UI Navigation**: Custom navigation system with permanent session states
+5. **Data Field Mapping**: Intelligent fuzzy matching for column identification
+
+## Current Status & Next Steps
+
+The system is fully functional with three main modules:
+- **WHAT**: Introduction and setup instructions
+- **HUNTER**: Core analysis module for prospect personality profiles
+- **SPEAR**: Email generation module using the RRM framework
+
+Future improvements could include:
+- Expanded integrations with CRM systems
+- Advanced analytics for email performance
+- Multi-language support for international prospects
+- Team collaboration features
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/email-gtmwiz.git
-cd email-gtmwiz
+git clone https://github.com/williavs/hunter-2.git
+cd hunter-2
 ```
 
 2. Create a virtual environment and install dependencies:
@@ -35,10 +94,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file in the project root directory with your API keys:
+3. Create a `.env` file in the project root directory with your API key:
 ```
-OPENROUTER_API_KEY=your_openrouter_api_key
-TAVILY_API_KEY=your_tavily_api_key
+OPENAI_API_KEY=your_openai_api_key
 ```
 
 ## Usage
@@ -48,7 +106,7 @@ TAVILY_API_KEY=your_tavily_api_key
 streamlit run streamlit_app.py
 ```
 
-2. Configure your API keys in the sidebar (if not set in `.env` file)
+2. Configure your API key in the sidebar (if not set in `.env` file)
 
 3. Add your company context information:
    - Enter your company website URL and target geography
@@ -65,35 +123,17 @@ streamlit run streamlit_app.py
 
 8. Click "Analyze Personalities" to generate AI-powered insights
 
-9. Download the enriched data as CSV when processing is complete
+9. Navigate to SPEAR to generate personalized emails
 
-## API Requirements
+10. Download the enriched data as CSV when processing is complete
 
-- **OpenRouter API Key**: Required for accessing Claude 3.5 Haiku for personality analysis
-  - Sign up at [OpenRouter](https://openrouter.ai/)
-  
-- **Tavily API Key**: Required for web search functionality
-  - Sign up at [Tavily](https://tavily.com/)
+## Technical Documentation
 
-## Dependencies
+- **OpenAI Web Search**: This project utilizes [OpenAI's Web Search capability](https://platform.openai.com/docs/api-reference/responses/web-search) through the Responses API, allowing models to search the web for the latest information before generating a response.
 
-- streamlit
-- pandas
-- numpy
-- langchain
-- langgraph
-- html2text
-- requests
-- python-dotenv
-- langsmith (optional, for tracing)
+- **LangChain-OpenAI Integration**: The system leverages [LangChain's OpenAI integration](https://python.langchain.com/docs/integrations/llms/openai) to seamlessly work with OpenAI's models and tools.
 
-## Architecture
-
-The application follows a modular, agent-based architecture using LangGraph for workflow orchestration:
-- Personality Analyzer Module: Processes contact information using AI models
-- Company Context Module: Analyzes company websites to extract business insights
-- Data Processing Pipeline: Manages data flow between components
-- Search Integration: Gathers relevant information about contacts
+- **LangGraph Workflow**: The multi-agent workflow is orchestrated using [LangGraph](https://python.langchain.com/docs/langgraph), which provides a powerful framework for creating stateful agent workflows.
 
 ## License
 
