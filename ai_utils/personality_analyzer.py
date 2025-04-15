@@ -31,38 +31,19 @@ from langchain_core.tools import tool
 import json
 import re
 
+# Import fuzzy matching library
+from rapidfuzz import fuzz
+
 # Import dotenv and load environment variables
 from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Custom OpenRouter integration with LangChain
-class ChatOpenRouter(ChatOpenAI):
-    openai_api_key: Optional[SecretStr] = Field(
-        alias="api_key",
-        default_factory=secret_from_env("OPENROUTER_API_KEY", default=None),
-    )
-    @property
-    def lc_secrets(self) -> dict[str, str]:
-        return {"openai_api_key": "OPENROUTER_API_KEY"}
-
-    def __init__(self,
-                 openai_api_key: Optional[str] = None,
-                 **kwargs):
-        openai_api_key = (
-            openai_api_key or os.environ.get("OPENROUTER_API_KEY")
-        )
-        super().__init__(
-            base_url="https://openrouter.ai/api/v1",
-            openai_api_key=openai_api_key,
-            **kwargs
-        )
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Updated imports for the current LangGraph API
 from langgraph.graph import StateGraph, END
-
-# Use the centralized logger
-logger = logging.getLogger(__name__)
 
 class ContactInfo(BaseModel):
     """Contact information for a person to analyze."""
@@ -74,6 +55,8 @@ class ContactInfo(BaseModel):
     company: Optional[str] = Field(default=None, description="Company name")
     title: Optional[str] = Field(default=None, description="Job title")
     website_content: Optional[str] = Field(default=None, description="Scraped website content")
+    company_linkedin_url: Optional[str] = Field(default=None, description="Company LinkedIn URL")
+    facebook_url: Optional[str] = Field(default=None, description="Facebook profile URL")
     
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "ContactInfo":
@@ -116,9 +99,6 @@ class AnalysisResult(BaseModel):
     """Results of personality analysis."""
     contact_id: str
     personality_analysis: str
-    conversation_style: str
-    professional_interests: List[str] = Field(default_factory=list)
-    purchasing_behavior: Optional[str] = Field(default="")
     error: Optional[str] = None
     search_queries_used: List[str] = Field(default_factory=list)
     search_results: List[Dict] = Field(default_factory=list)
@@ -138,49 +118,51 @@ class PersonalityState(TypedDict):
 class PersonalityAnalyzer:
     """Analyzes personality based on online presence."""
     
+    # Class variable for shared search cache across all instances
+    _global_search_cache = {}
+    
     def __init__(self, 
-                 openrouter_api_key: Optional[str] = None,
-                 tavily_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta",
-                 max_concurrent: int = 10):
+                 max_concurrent: int = 10
+              ):
         """
         Initialize the personality analyzer.
         
         Args:
-            openrouter_api_key: API key for OpenRouter
-            tavily_api_key: API key for Tavily search
-            model_name: Model to use for analysis (defaults to claude-3.7-sonnet)
-            max_concurrent: Maximum number of concurrent analyses (used for search operations)
+            max_concurrent: Maximum number of concurrent analyses
         """
-        self.openrouter_api_key = openrouter_api_key
-        self.tavily_api_key = tavily_api_key
-        self.model_name = model_name
+        # Configuration properties
         self.max_concurrent = max_concurrent
         
-        # Initialize search cache - shared across all instances
-        if not hasattr(PersonalityAnalyzer, '_global_search_cache'):
-            PersonalityAnalyzer._global_search_cache = {}
+        # Initialize search cache using class variable
         self._search_cache = PersonalityAnalyzer._global_search_cache
         
-        # Set up the search tool
-        if tavily_api_key:
-            self.search_tool = TavilySearchResults(api_key=tavily_api_key)
-        else:
-            raise ValueError("Tavily API key is required")
-        
-        # Set up the LLM
-        if openrouter_api_key:
-            self.llm = ChatOpenRouter(
-                openai_api_key=openrouter_api_key,
-                model=model_name,
-                temperature=0.1,
-                streaming=False
-            )
-        else:
-            raise ValueError("OpenRouter API key is required")
+        # Set up tools based on configuration
+        self._initialize_tools()
         
         # Build the workflow
         self.workflow = self._build_workflow()
+    
+    def _initialize_tools(self):
+        """Initialize the search tool and LLM based on the current configuration."""
+        # Set up search tool using OpenAI with web search capability
+        logger.debug("Initializing OpenAI search tool")
+        # Initialize OpenAI ChatModel with web search
+        self.search_llm = ChatOpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            model="gpt-4.1"
+        )
+        # Bind the web search tool
+        self.search_tool = self.search_llm.bind_tools([{"type": "web_search_preview"}])
+    
+        # Set up the LLM for analysis - also using gpt-4.1 directly from OpenAI
+        logger.debug(f"Initializing LLM with model: gpt-4.1")
+        self.llm = ChatOpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            model="gpt-4.1",
+            temperature=0.1,
+            streaming=False,
+            timeout=90  # Adding a longer timeout for reliability
+        )
     
     def enable_tracing(self, project_name="email-gtmwiz-personality-analysis"):
         """
@@ -208,251 +190,300 @@ class PersonalityAnalyzer:
         logger.info(f"LangSmith tracing enabled for project: {project_name}")
         return True
     
-    async def test_openrouter_api_key(self) -> bool:
-        """
-        Test if the OpenRouter API key is valid by making a simple request.
-        
-        Returns:
-            bool: True if the key is valid, False otherwise
-        """
-        try:
-            logger.debug("Testing OpenRouter API key with a simple request")
-            
-            # Log key format details (safely)
-            if self.openrouter_api_key:
-                key_preview = self.openrouter_api_key[:10] + "..." if len(self.openrouter_api_key) > 10 else "[empty]"
-                logger.debug(f"API key being tested: {key_preview}")
-                logger.debug(f"API key length: {len(self.openrouter_api_key)}")
-                
-                # Check for common issues
-                if '"' in self.openrouter_api_key:
-                    logger.warning("API key contains quote characters - this may cause authentication issues")
-                if ' ' in self.openrouter_api_key:
-                    logger.warning("API key contains spaces - this may cause authentication issues")
-            else:
-                logger.error("No API key available for testing")
-                return False
-            
-            # Create a direct test with minimal dependencies
-            try:
-                # Note: There's no direct OpenRouter client library like anthropic
-                # So we'll skip this test and rely on the LangChain test
-                logger.debug("Skipping direct client test as there's no official OpenRouter client library")
-            except Exception as e:
-                logger.error(f"Direct client test failed: {str(e)}")
-            
-            # Test with LangChain's ChatOpenRouter
-            messages = [
-                SystemMessage(content="You are a helpful assistant."),
-                HumanMessage(content="Respond with 'API key is working' if you can see this message.")
-            ]
-            
-            # Make a simple request
-            logger.debug("Sending test request to ChatOpenRouter")
-            response = self.llm.invoke(messages)
-            
-            # Check if we got a valid response
-            if response and hasattr(response, 'content') and response.content:
-                logger.debug(f"OpenRouter API test successful, received response: {response.content[:50]}...")
-                return True
-            else:
-                logger.error("OpenRouter API test failed: Received empty response")
-                return False
-                
-        except Exception as e:
-            logger.error(f"OpenRouter API test failed with error: {str(e)}")
-            logger.exception("Detailed exception:")
-            return False
-    
-    def _planning_task(self, state: PersonalityState) -> PersonalityState:
-        """Plan what information to search for based on contact info and company context."""
+    async def _search_task(self, state: PersonalityState) -> PersonalityState:
+        """Execute comprehensive web search for the contact using built-in OpenAI web search."""
         contact_data = state["contact_data"]
         company_context = state.get("company_context", {})
         
         # Check if website content is missing
         has_website_content = contact_data.get("website_content", "").strip() != ""
         
-        # Prepare company context text separately
-        company_context_text = ""
+        # Extract essential contact information
+        name = contact_data.get("name", "Unknown")
+        company = contact_data.get("company", "")
+        title = contact_data.get("title", "")
+        
+        # Generate comprehensive search prompts
+        search_prompts = []
+        
+        # Format company context as a simple block if available
+        company_context_block = ""
+        company_name = ""
         if company_context:
-            company_context_text = """
-My Company Context:
-Below is information about my company, our target market, and the specific problems we solve.
-When creating the personality analysis, you MUST directly connect the contact's pain points 
-to the specific problems our company solves. The Route-Ruin-Multiply analysis should explicitly 
-show how our solutions address their challenges:
-
+            company_name = company_context.get('company_name', '')
+            company_url = company_context.get('url', '')
+            company_description = company_context.get('description', '')
+            
+            company_context_block = f"""
+Company Information:
+Name: {company_name}
+URL: {company_url}
+Description: {company_description}
 """
-            company_context_text += json.dumps(company_context, indent=2)
+            # Add any additional relevant fields
+            for key, value in company_context.items():
+                if key not in ['company_name', 'name', 'url', 'description'] and value:
+                    company_context_block += f"{key.replace('_', ' ').title()}: {value}\n"
         
-        # Create context for the LLM with strict JSON formatting instructions
-        prompt = f"""
-        <search_query_generation>
-            <context>
-                I need to analyze the personality of the following person to help with sales outreach from my company:
-                
-                Contact Data:
-                {contact_data}
-                
-                {"NOTE: This contact does not have any website content available. Please create search queries based on their name, company, and role only." if not has_website_content else ""}
-                
-                {company_context_text}
-            </context>
-            
-            <objective>
-                Your task is to create EXACTLY 2 highly targeted search queries that will help me understand:
-                1. Their communication style, professional background, and the specific PAIN POINTS they are likely experiencing in their role
-                2. Their professional interests, values, and how they typically respond to sales approaches
-            </objective>
-            
-            <search_strategy>
-                - Create ONLY 2 queries - quality over quantity
-                - Make each query specific and information-rich
-                - Include their name, company, and role in each query
-                - IMPORTANT: Include terms that will find EVIDENCE of their actual behavior (LinkedIn activity, writing style, speaking engagements)
-                - Focus on identifying challenges, struggles, or "pain points" they might have that our solution could address
-                - Include industry-specific problems or objections they might raise based on their role
-                - Consider how our company's context relates to the specific problems they're trying to solve
-                - Include terms to uncover industry benchmarks and metrics relevant to their role
-            </search_strategy>
-            
-            <response_format>
-                You must respond with ONLY a valid JSON array of strings. Each string should be a search query.
-                
-                Example of the EXACT format required:
-                ```json
-                [
-                  "John Smith Microsoft CEO leadership style communication preferences LinkedIn activity speaking engagements writing samples",
-                  "John Smith Microsoft decision-making process pain points enterprise transformation challenges vendor evaluation criteria"
-                ]
-                ```
-                
-                Do not include any explanations, notes, or other text outside the JSON array. The response must be a valid JSON array that can be parsed directly.
-            </response_format>
-        </search_query_generation>
-        """
+        # General professional background and personality prompt
+        background_prompt = f"""Search for comprehensive information about {name}, who is {title} at {company}.
+Focus on:
+1. Their professional background, experience, and career trajectory
+2. Their communication style, writing samples, and speaking engagements
+3. Their specific expertise and notable accomplishments
+4. Their decision-making process and leadership approach
+5. Their sphere of influence and relationships within their organization
+6. Their likely career aspirations and professional motivations
+7. Any signs of personal values or emotional drivers that influence decisions
+"""
+        search_prompts.append(background_prompt)
         
-        try:
-            # Get search queries from LLM with strict system message
-            messages = [
-                SystemMessage(content="You are a helpful assistant that creates search queries to gather information about professional contacts. You MUST respond with ONLY a valid JSON array of strings, with no additional text."),
-                HumanMessage(content=prompt)
-            ]
-            
-            response = self.llm.invoke(messages)
-            
-            # Extract search queries from LLM response
-            search_queries = []
-            
-            # First try to parse the entire response as JSON
-            try:
-                # Strip any markdown code block indicators
-                clean_response = re.sub(r'```json|```', '', response.content).strip()
-                search_queries = json.loads(clean_response)
-                logger.debug(f"Successfully parsed entire response as JSON: {search_queries}")
-            except json.JSONDecodeError:
-                # If that fails, look for JSON array in the response
-                logger.debug("Failed to parse entire response as JSON, looking for JSON array")
-                json_match = re.search(r'\[.*\]', response.content, re.DOTALL)
-                if json_match:
-                    queries_json = json_match.group(0)
-                    try:
-                        search_queries = json.loads(queries_json)
-                        logger.debug(f"Successfully parsed JSON array from response: {search_queries}")
-                    except json.JSONDecodeError:
-                        logger.error("Failed to parse JSON array from response")
-                        # Fallback to basic extraction
-                        lines = response.content.strip().split('\n')
-                        search_queries = [line.strip() for line in lines if line.strip() and not line.startswith('```')]
-                else:
-                    # Fallback to basic extraction if no JSON array found
-                    logger.error("No JSON array found in response, falling back to basic extraction")
-                    lines = response.content.strip().split('\n')
-                    search_queries = [line.strip() for line in lines if line.strip() and not line.startswith('```')]
-            
-            # Ensure all queries are strings
-            search_queries = [str(query) for query in search_queries]
-            
-            # Add the queries to the messages
-            state["messages"].append({
-                "role": "system",
-                "content": f"Generated search queries: {search_queries}"
-            })
-            
-            # Store search queries in state - limit to 2 queries
-            state["search_queries"] = search_queries[:2]  # Limit to 2 queries
-            
-        except Exception as e:
-            error_msg = f"Error in planning: {str(e)}"
-            logger.error(error_msg)
-            state["errors"].append(error_msg)
-            contact_name = state["contact"].get("name", "Unknown")
-            state["search_queries"] = [f"{contact_name} professional background"]  # Fallback query
+        # Pain points and challenges prompt
+        challenges_prompt = f"""Search for information about the specific challenges and pain points that {name} 
+as {title} at {company} likely faces in their role. Focus on:
+1. Industry-specific problems related to their position
+2. Common challenges for {title} roles in companies like {company}
+3. Recent business changes or transformations at {company}
+4. Regulatory or compliance issues they might be dealing with
+5. Technology or process challenges in their field
+6. Infer their daily frustrations and emotional pain points based on their role
+7. Assess whether they have decision-making authority for solutions to these challenges
+
+Additionally, determine:
+- Do they appear to be an influencer or decision-maker for operational/administrative solutions?
+- Are they likely the right contact for HR, payroll, or administrative technology decisions?
+- If not, who in their organization would likely be the better contact?
+"""
         
-        return state
-    
-    async def _search_task(self, state: PersonalityState) -> PersonalityState:
-        """Execute searches for each query in parallel."""
-        search_queries = state.get("search_queries", [])
+        # If we have company context, add it as a block
+        if company_context_block:
+            challenges_prompt += f"\nAdditional context about their company: {company_context_block}"
+            
+        search_prompts.append(challenges_prompt)
         
-        if not search_queries:
-            state["errors"].append("No search queries available")
-            return state
-        
-        # Deduplicate search queries to avoid redundant searches
-        unique_queries = list(set(search_queries))
-        logger.debug(f"Reduced {len(search_queries)} queries to {len(unique_queries)} unique queries")
+        # Generate company-specific prompt (always, not conditionally)
+        company_prompt = f"""Search for information about how {name} ({title} at {company}) 
+might relate to the following company context:
+
+{company_context_block}
+
+Focus on:
+1. Based on their role, would this person be involved in decisions about solutions described above?
+2. Are there any signs they would or would NOT be interested in these solutions?
+3. What specific problems from the company description would they personally care most about?
+4. Who else at their company might be a better target if they're not the right person?
+5. What would motivate this person to consider or champion such solutions?
+
+Important: Make reasonable inferences even with limited information. Look for clues about their:
+- Decision-making authority regarding operational or administrative solutions
+- Likely interest in efficiency, compliance, or team enablement
+- Pain points that the described services might address
+- Emotional and career motivations that might influence their interest
+"""           
+        search_prompts.append(company_prompt)
         
         search_results = []
         
-        # Execute searches in parallel with improved caching
-        async def execute_search(query: str):
+        # Execute searches in parallel
+        async def execute_search(prompt: str):
             try:
                 # Normalize query to improve cache hits
-                query_str = str(query).strip().lower()
+                query_str = str(prompt).strip().lower()
                 
                 # Check if we have a cached result for this query
                 if query_str in self._search_cache:
-                    logger.debug(f"Using cached result for query: {query_str}")
+                    logger.debug(f"Using cached result for search: {query_str[:50]}...")
                     return self._search_cache[query_str]
                 
-                logger.debug(f"Executing new search for query: {query_str}")
-                # Execute the search
-                result = await asyncio.to_thread(self.search_tool.invoke, query_str)
+                logger.debug(f"Executing new search: {query_str[:50]}...")
+          
+                    # Format for OpenAI web search
+                search_query = f"Search for information about: {prompt}"
+                response = await asyncio.to_thread(self.search_tool.invoke, search_query)
                 
+                # Process OpenAI results into a format compatible with our existing code
+                processed_results = self._process_openai_search_results(response)
+                
+                result = {"query": prompt, "results": processed_results}
+            
                 # Cache the result
-                self._search_cache[query_str] = {"query": query, "results": result}
+                self._search_cache[query_str] = result
                 
-                return {"query": query, "results": result}
+                return result
             except Exception as e:
-                logger.error(f"Search error for query '{query}': {str(e)}")
-                return {"query": str(query), "results": [], "error": str(e)}
+                logger.error(f"Search error for prompt: '{prompt[:50]}...': {str(e)}")
+                return {"query": str(prompt), "results": [], "error": str(e)}
         
         # Run searches concurrently with a semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(5)  # Reduce to 5 concurrent searches for better stability
+        semaphore = asyncio.Semaphore(3)  # Limit to 3 concurrent searches for stability
         
-        async def search_with_semaphore(query):
+        async def search_with_semaphore(prompt):
             async with semaphore:
-                return await execute_search(query)
+                return await execute_search(prompt)
         
-        # Create tasks for each unique query
-        tasks = [search_with_semaphore(query) for query in unique_queries]
+        # Create tasks for each search prompt
+        tasks = [search_with_semaphore(prompt) for prompt in search_prompts]
         search_outputs = await asyncio.gather(*tasks)
         
         # Collect results
         for output in search_outputs:
             if "error" not in output:
                 search_results.append(output)
+            else:
+                logger.warning(f"Search error: {output.get('error')}")
+                state["errors"].append(f"Search error: {output.get('error')}")
         
         state["search_results"] = search_results
         
         # Add the search results to the messages
         state["messages"].append({
             "role": "system",
-            "content": f"Search results: {len(search_results)} queries returned information."
+            "content": f"Search results: {len(search_results)} comprehensive searches returned information."
         })
         
+        # For backward compatibility, store original search prompts as search_queries
+        state["search_queries"] = [prompt for prompt in search_prompts]
+        
         return state
+    
+    def _process_openai_search_results(self, response):
+        """
+        Process OpenAI web search results into a consistent format for analysis.
+        
+        Args:
+            response: The response from OpenAI web search
+            
+        Returns:
+            List of search results in a standardized format
+        """
+        results = []
+        
+        try:
+            # Extract content blocks from response
+            if hasattr(response, 'content') and response.content:
+                for block in response.content:
+                    if block.get('type') == 'text':
+                        text_content = block.get('text', '')
+                        
+                        # Extract annotations (citations)
+                        annotations = block.get('annotations', [])
+                        
+                        # If there are no annotations, create a single result with the full text
+                        if not annotations:
+                            results.append({
+                                "title": "Web Search Synthesis",
+                                "content": text_content,
+                                "source": "Synthesized content without specific sources"
+                            })
+                        else:
+                            # Process annotations to create results with proper citations
+                            for annotation in annotations:
+                                if annotation.get('type') == 'url_citation':
+                                    url = annotation.get('url', '')
+                                    title = annotation.get('title', 'Untitled Source')
+                                    
+                                    # Get the cited text
+                                    start_idx = annotation.get('start_index', 0)
+                                    end_idx = annotation.get('end_index', len(text_content))
+                                    
+                                    # Ensure indices are within bounds
+                                    start_idx = max(0, min(start_idx, len(text_content)))
+                                    end_idx = max(0, min(end_idx, len(text_content)))
+                                    
+                                    # Extract the cited text with additional context
+                                    # Include more context around the citation to ensure important information is preserved
+                                    context_start = max(0, start_idx - 250)
+                                    context_end = min(len(text_content), end_idx + 250)
+                                    
+                                    # Extract with expanded context
+                                    full_content = text_content[context_start:context_end]
+                                    
+                                    results.append({
+                                        "title": title,
+                                        "content": full_content,
+                                        "source": url
+                                    })
+                            
+                            # Also add the full synthesized text as a single result for completeness
+                            # This ensures we don't lose any important context that might be between citations
+                            results.append({
+                                "title": "Complete Synthesized Response",
+                                "content": text_content,
+                                "source": "Full search synthesis"
+                            })
+            
+            # If we didn't get any results from annotations, use the full response text
+            if not results and hasattr(response, 'text'):
+                results.append({
+                    "title": "Web Search Response",
+                    "content": response.text(),
+                    "source": "OpenAI web search synthesis"
+                })
+                
+        except Exception as e:
+            logger.error(f"Error processing OpenAI search results: {str(e)}")
+            # Add a fallback result with error information
+            results.append({
+                "title": "Error processing results",
+                "content": f"An error occurred while processing search results: {str(e)}",
+                "source": "Error"
+            })
+        
+        return results
+    
+    def _process_website_content(self, content: str, company_name: Optional[str] = None) -> str:
+        """
+        Process website content to ensure important information is preserved.
+        
+        Args:
+            content: The original website content
+            company_name: Optional company name to ensure mentions are preserved
+            
+        Returns:
+            Processed content with important sections preserved
+        """
+        if not content:
+            return ""
+            
+        # If content is short enough, return it as is
+        if len(content) <= 2000:
+            return content
+            
+        # Extract important sections
+        important_sections = []
+        
+        # Always include the first 800 characters (likely contains important intro information)
+        important_sections.append(content[:800])
+        
+        # Check for company name mentions if provided
+        if company_name and company_name.strip():
+            company_lower = company_name.lower()
+            remaining_content = content[800:-800]
+            
+            # Find all company name mentions
+            start_idx = 0
+            while True:
+                idx = remaining_content.lower().find(company_lower, start_idx)
+                if idx == -1:
+                    break
+                    
+                # Extract a section around the company mention (300 chars before and after)
+                section_start = max(0, idx - 300)
+                section_end = min(len(remaining_content), idx + len(company_name) + 300)
+                section = remaining_content[section_start:section_end]
+                
+                important_sections.append(f"... {section} ...")
+                start_idx = idx + len(company_name)
+                
+                # Limit to 3 company mentions to avoid excessive content
+                if len(important_sections) >= 4:  # 1 intro + 3 mentions
+                    break
+        
+        # Always include the last 800 characters (likely contains important concluding information)
+        important_sections.append(content[-800:])
+        
+        # Join sections with separators
+        return "\n...[Content truncated]...\n".join(important_sections)
     
     def _analysis_task(self, state: PersonalityState) -> PersonalityState:
         """Analyze search results to generate personality insights relevant to company context."""
@@ -467,36 +498,61 @@ show how our solutions address their challenges:
         if not search_results:
             # Create a more informative message based on whether website content was available
             if not has_website_content:
-                analysis_message = "No website content was provided for this contact. Analysis is based solely on search results."
+                analysis_message = "No website content was provided for this contact. Analysis is based solely on search results, but no search results were found."
             else:
-                analysis_message = "Insufficient data for analysis. No search results were found."
+                analysis_message = "Insufficient data for analysis. No search results were found despite website content being available."
                 
             state["errors"].append("No search results available for analysis")
             state["analysis"] = {
                 "contact_id": contact_name,
                 "personality_analysis": analysis_message,
-                "conversation_style": "Unknown",
-                "error": "No search results available",
-                "professional_interests": [],
                 "search_queries_used": [],
                 "search_results": []
             }
             state["complete"] = True
             return state
         
-        # Prepare search results for prompt - more efficiently
+        # Prepare search results for prompt - more efficiently and handling the new format
         results_text = ""
-        for result in search_results:
-            query_str = result.get('query', '')
-            results_text += f"\nQuery: {query_str}\n"
+        has_website_content = False
+        
+        # Gather all results
+        for item in search_results:
+            source = item.get('source', 'Unknown Source')
+            title = item.get('title', 'No Title')
             
-            # Limit to top 3 results per query for efficiency
-            for i, item in enumerate(result['results'][:3]):
-                results_text += f"Result {i+1}: {item.get('title', 'No title')}\n"
+            if source.lower() == 'website':
+                has_website_content = True
+            
+            results_text += f"Source: {source}\nTitle: {title}\n"
+            
+            # Get the content from the item
+            content = item.get('content', 'No content')
+            
+            # Check for company name mentions to ensure they're not truncated
+            company_name = None
+            if company_context and 'company_name' in company_context:
+                company_name = company_context['company_name']
+            
+            if len(content) > 10000:
+                # For very long content, include first and middle and last parts
+                # to avoid truncating important information
+                first_part = content[:6000]
+                last_part = content[-6000:]
                 
-                # Extract only the most relevant part of the content (first 300 chars)
-                content = item.get('content', 'No content')
-                results_text += f"Content: {content[:300]}...\n\n"
+                # If company name is in the middle part, extract that section too
+                middle_part = ""
+                if company_name and company_name.lower() in content.lower()[600:-600]:
+                    # Find the approximate position of the company name in the middle section
+                    middle_idx = content.lower()[600:-600].find(company_name.lower()) + 600
+                    # Extract a section around the company mention
+                    start_idx = max(0, middle_idx - 150)
+                    end_idx = min(len(content), middle_idx + len(company_name) + 150)
+                    middle_part = f"... [Important company mention: {content[start_idx:end_idx]}] ..."
+                
+                results_text += f"Content: {first_part}... {middle_part} ...{last_part}\n\n"
+            else:
+                results_text += f"Content: {content}\n\n"
         
         # Prepare company context text separately
         company_context_text = ""
@@ -506,10 +562,30 @@ My Company Context:
 Below is information about my company, our target market, and the specific problems we solve.
 When creating the personality analysis, you MUST directly connect the contact's pain points 
 to the specific problems our company solves. The Route-Ruin-Multiply analysis should explicitly 
-show how our solutions address their challenges:
+show how our solutions address their challenges.
+IMPORTANT: ALWAYS include our company's full legal name without abbreviation or truncation:
 
 """
-            company_context_text += json.dumps(company_context, indent=2)
+            # Extract key fields for easier processing
+            company_name = company_context.get('company_name', '')
+            company_description = company_context.get('description', '')
+            
+            # Create a structured format to ensure clarity
+            context_details = [
+                f"Company Name: {company_name}",
+                f"Description: {company_description}"
+            ]
+            
+            # Add any additional fields present in the context
+            for key, value in company_context.items():
+                if key not in ['company_name', 'description'] and value:
+                    context_details.append(f"{key.replace('_', ' ').title()}: {value}")
+            
+            # Join all context details with newlines for clarity
+            company_context_text += "\n".join(context_details)
+            
+            # Also include the full JSON as a backup to ensure no information is lost
+            company_context_text += "\n\nFull Company Context:\n" + json.dumps(company_context, indent=2)
         
         # Create analysis prompt without JSON output instructions
         prompt = f"""
@@ -582,6 +658,7 @@ show how our solutions address their challenges:
                     - Note their likely research process before making decisions (demos, case studies, testimonials, etc.)
                     - Specify potential budget constraints or approval processes based on their role and company
                     - How does their career trajectory impact their purchasing priorities?
+                    - IMPORTANT: Assess whether they likely have decision-making authority for solutions like ours
                 </purchasing_behavior>
 
                 <objections>
@@ -610,6 +687,22 @@ show how our solutions address their challenges:
                 However, clearly indicate when you are making such inferences rather than stating known facts.
                 
                 REMEMBER: Focus equally on both PRACTICAL/TECHNICAL aspects AND EMOTIONAL/CAREER motivations throughout your analysis.
+                **IMPORTANT FUNCTION REQUIREMENT: NO CONVERSATIONAL TEXT OR INTROS- GET RIGHT TO THE POINT - THIS IS NOT A CONVERSATION - FUNCTION AS A TOOL
+
+                **CRITICAL DECISION-MAKER ASSESSMENT: 
+                At the VERY BEGINNING of your analysis, you MUST clearly categorize the contact using ONE of these five designations:
+
+                1. "PRIMARY DECISION-MAKER: [Name] appears to be a primary decision-maker for our solutions because [brief evidence]."
+
+                2. "STRONG INFLUENCER: [Name] is likely a strong influencer but not the final decision-maker because [brief reason]. They can champion solutions to the actual decision-makers, typically [role types]."
+
+                3. "POTENTIAL INFLUENCER: [Name] could be an influencer in the evaluation process because [brief reason], though their exact level of authority is unclear. Decisions typically require [role types]."
+
+                4. "INFORMATION GATHERER: [Name] appears to be in an information-gathering role because [brief reason]. They may research solutions but decisions are typically made by [role types]."
+
+                5. "DEFINITELY THE WRONG PERSON:  [You fill in the blanks]."
+
+                For any designation other than PRIMARY DECISION-MAKER, focus more on company-wide benefits rather than personal benefits. DO NOT speculate about specific individuals who might be better contacts or fabricate names, titles, or people not mentioned in the data. Keep your assessment honest, evidence-based, and direct.
             </guidance>
         </personality_analysis_request>
         """
@@ -633,40 +726,17 @@ show how our solutions address their challenges:
                 "content": response.content
             })
             
-            # Extract professional interests using regex
-            interests = []
-            interests_section = re.search(r'Professional Interests:.*?(\n\n|\Z)', response.content, re.DOTALL)
-            if interests_section:
-                interest_text = interests_section.group(0)
-                # Look for list items (- or • or 1. format)
-                interest_items = re.findall(r'(?:[-•*]|\d+\.)\s+(.*?)(?=\n[-•*]|\n\d+\.|\n\n|\Z)', interest_text, re.DOTALL)
-                interests = [item.strip() for item in interest_items if item.strip()]
-            
-            # Extract conversation style using regex
-            style = "Unknown"
-            style_section = re.search(r'Conversation Style:(.*?)(?=\n\n|\n\d\.|\Z)', response.content, re.DOTALL)
-            if style_section:
-                style = style_section.group(1).strip()
-            
-            # Extract purchasing behavior using regex
-            purchasing_behavior = ""
-            purchasing_section = re.search(r'Purchasing Behavior Analysis:(.*?)(?=\n\n|\n\d\.|\Z)', response.content, re.DOTALL)
-            if purchasing_section:
-                purchasing_behavior = purchasing_section.group(1).strip()
-            
-            # Create analysis result - ensure search_queries_used contains strings only
+            # Create analysis result 
             analysis = {
                 "contact_id": contact_name,
                 "personality_analysis": response.content,
-                "conversation_style": style,
-                "purchasing_behavior": purchasing_behavior,
-                "professional_interests": interests,
-                "search_queries_used": [str(r.get("query", "")) for r in search_results],  # Convert to string to ensure compatibility
+                "search_queries_used": [str(r.get("query", ""))[:250] for r in search_results],  # Increased from 100 to 250 chars per query
                 "search_results": [
                     {
                         "title": item.get("title", ""),
-                        "url": item.get("url", "")
-                    } for result in search_results for item in result.get("results", [])[:3]  # Limit to top 3 results per query
+                        "url": item.get("source", ""),
+                        "snippet": item.get("content", "")[:300] if item.get("content") else ""  # Added content snippet
+                    } for result in search_results for item in result.get("results", [])[:5]  # Increased from top 3 to top 5 results per query
                 ]
             }
             
@@ -679,9 +749,6 @@ show how our solutions address their challenges:
             state["analysis"] = {
                 "contact_id": contact_name,
                 "personality_analysis": "Error during analysis",
-                "conversation_style": "Unknown",
-                "error": error_msg,
-                "professional_interests": [],
                 "search_queries_used": [],
                 "search_results": []
             }
@@ -694,18 +761,16 @@ show how our solutions address their challenges:
         # Create a state graph with the PersonalityState type
         workflow = StateGraph(PersonalityState)
         
-        # Add nodes for each task
-        workflow.add_node("planning", self._planning_task)
+        # Add nodes for each task - removing the planning task
         workflow.add_node("search", self._search_task)
         workflow.add_node("analysis_task", self._analysis_task)
         
         # Define the edges to create a linear flow
-        workflow.add_edge("planning", "search")
         workflow.add_edge("search", "analysis_task")
         workflow.add_edge("analysis_task", END)
         
-        # Set the entry point
-        workflow.set_entry_point("planning")
+        # Set the entry point directly to search
+        workflow.set_entry_point("search")
         
         # Enable tracing for the workflow if LangSmith is configured
         if os.environ.get("LANGCHAIN_TRACING_V2") == "true" and os.environ.get("LANGCHAIN_API_KEY"):
@@ -742,7 +807,6 @@ show how our solutions address their challenges:
             return AnalysisResult(
                 contact_id=contact.name,
                 personality_analysis="Analysis failed",
-                conversation_style="Unknown",
                 error="Workflow did not produce an analysis"
             )
             
@@ -751,7 +815,6 @@ show how our solutions address their challenges:
             return AnalysisResult(
                 contact_id=contact.name,
                 personality_analysis="Analysis failed",
-                conversation_style="Unknown",
                 error=str(e)
             )
     
@@ -792,7 +855,9 @@ show how our solutions address their challenges:
                     "linkedin_url": contact.linkedin_url or "",
                     "twitter_url": contact.twitter_url or "",
                     "personal_website": contact.personal_website or "",
-                    "website_content": contact.website_content[:1000] if contact.website_content else ""  # Limit website content
+                    "website_content": self._process_website_content(contact.website_content, contact.company) if contact.website_content else "",
+                    "company_linkedin_url": contact.company_linkedin_url or "",
+                    "facebook_url": contact.facebook_url or "",
                 }
                 
                 # Analyze the contact with company context
@@ -814,7 +879,6 @@ show how our solutions address their challenges:
                     result = AnalysisResult(
                         contact_id=contact.name,
                         personality_analysis="Analysis failed",
-                        conversation_style="Unknown",
                         error=str(result)
                     )
                 
@@ -847,130 +911,67 @@ show how our solutions address their challenges:
         return await self.analyze_personalities_with_contacts(contacts)
 
 # Function for integration with the main application
-async def analyze_personality(df: pd.DataFrame, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta", company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+async def analyze_personality(df: pd.DataFrame, company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     """
-    Analyze personalities for contacts in a DataFrame.
+    Analyze the personalities of contacts in a DataFrame.
     
     Args:
-        df: DataFrame with contact information
-        model_name: Name of the model to use for analysis (default: "anthropic/claude-3.5-haiku-20241022:beta")
-        company_context: Dictionary containing information about the user's company
+        df: DataFrame containing contact information and website content
+        company_context: Optional company context to provide for analysis
         
     Returns:
-        DataFrame with personality analysis results
+        DataFrame containing the original data plus personality analysis results
     """
-    # First, validate the OpenRouter API key
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    tavily_key = os.environ.get("TAVILY_API_KEY")
-    
-    if not openrouter_key:
-        logger.error("OPENROUTER_API_KEY not found in environment")
-        raise ValueError("OpenRouter API key is required for personality analysis")
-    
-    if not tavily_key:
-        logger.error("TAVILY_API_KEY not found in environment")
-        raise ValueError("Tavily API key is required for personality analysis")
-    
-    # Create analyzer with the OpenRouter API key and specified model
-    analyzer = PersonalityAnalyzer(
-        openrouter_api_key=openrouter_key,
-        tavily_api_key=tavily_key,
-        model_name=model_name
-    )
-    
-    # Enable LangSmith tracing if available
-    analyzer.enable_tracing()
-    
-    # Run analysis
     try:
-        logger.info(f"Starting personality analysis for {len(df)} contacts")
-        
-        # Create a copy of the input DataFrame
-        result_df = df.copy()
-        
-        # Add personality analysis columns if they don't exist
-        if 'personality_analysis' not in result_df.columns:
-            result_df['personality_analysis'] = ""
-        if 'conversation_style' not in result_df.columns:
-            result_df['conversation_style'] = ""
-        if 'professional_interests' not in result_df.columns:
-            result_df['professional_interests'] = ""
-        
-        # Add company_context as a column in the dataframe
-        if company_context:
-            # Create a simplified version of company context for the dataframe
-            simplified_context = {
-                'name': company_context.get('name', ''),
-                'description': company_context.get('description', ''),
-                'target_geography': company_context.get('target_geography', 'Global')
-            }
-            # Convert to JSON string for storage in dataframe
-            context_json = json.dumps(simplified_context)
-            result_df['company_context'] = context_json
-            logger.info(f"Added company context to dataframe: {simplified_context['name']}")
-        else:
-            # Add empty context if none provided
-            result_df['company_context'] = ""
-            logger.info("No company context provided, added empty context column")
-        
-        # Pre-generate all contact info objects and store their IDs
-        # This ensures we use the exact same contact IDs during analysis and when updating results
-        contact_infos = []
-        row_indices = []
-        contacts_with_content = 0
-        
-        # Process all rows, but keep track of which ones have website content
-        for idx, row in df.iterrows():
-            contact_info = ContactInfo.from_row(row.to_dict())
-            contact_infos.append(contact_info)
-            row_indices.append(idx)
-            
-            # Count how many contacts have website content (for logging purposes)
-            if 'website_content' in row and row['website_content']:
-                contacts_with_content += 1
-        
-        if not contact_infos:
-            logger.warning("No contacts found for analysis")
-            return result_df
-            
-        logger.info(f"Analyzing {len(contact_infos)} contacts (of which {contacts_with_content} have website content)")
-        
-        # Pass the pre-generated contact info objects to the analyzer with company context
-        results = await analyzer.analyze_personalities_with_contacts(contact_infos, company_context=company_context)
-        
-        # Create a mapping of contact IDs to row indices for more reliable matching
-        contact_id_to_index = {}
-        for i, contact_info in enumerate(contact_infos):
-            contact_id_to_index[contact_info.name] = row_indices[i]
-        
-        # Update the DataFrame with analysis results
-        for contact_id, analysis_result in results.items():
-            try:
-                # Check if we have this contact ID in our mapping
-                if contact_id in contact_id_to_index:
-                    idx = contact_id_to_index[contact_id]
-                    
-                    # Update the row with analysis results
-                    result_df.at[idx, 'personality_analysis'] = analysis_result.personality_analysis
-                   
-                    
-                    
-                else:
-                    # Log that we couldn't find a matching row
-                    logger.warning(f"No matching row found for contact ID: {contact_id}")
-            except Exception as e:
-                logger.error(f"Error updating results for {contact_id}: {str(e)}")
-        
-        # Apply a lambda function to handle any rows that weren't analyzed
-        result_df['professional_interests'] = result_df.apply(
-            lambda row: row['professional_interests'] if row['professional_interests'] else "",
-            axis=1
+        # Create analyzer instance using environment variables directly
+        analyzer = PersonalityAnalyzer(
+            max_concurrent=10
         )
         
-        return result_df
+        # Convert DataFrame rows to ContactInfo objects
+        contacts = []
+        for _, row in df.iterrows():
+            contact_dict = row.to_dict()
+            contact = ContactInfo.from_row(contact_dict)
+            contacts.append(contact)
         
+        # Analyze personalities
+        results = await analyzer.analyze_personalities_with_contacts(contacts, company_context)
+        
+        # Create a new column for personality analysis, preserving original data
+        result_df = df.copy()
+        
+        # Add analysis results to DataFrame
+        for contact_id, result in results.items():
+            # Find the corresponding row(s) in the DataFrame
+            # Use fuzzy matching to find the row with the closest name match
+            best_match = None
+            best_score = 0
+            
+            for i, row in df.iterrows():
+                # Get the name from the row - try different potential column names
+                for name_col in ['full_name', 'name', 'contact_name']:
+                    if name_col in row and pd.notna(row[name_col]):
+                        row_name = str(row[name_col])
+                        # Compare with the contact_id (which is the name in our case)
+                        score = fuzz.ratio(row_name.lower(), contact_id.lower())
+                        if score > best_score:
+                            best_score = score
+                            best_match = i
+                        break
+            
+            # If we found a good match (score > 80), add the results to that row
+            if best_match is not None and best_score > 80:
+                result_df.at[best_match, 'personality_analysis'] = result.personality_analysis
+                    
+                # Add error if present
+                if result.error:
+                    result_df.at[best_match, 'personality_analysis'] = f"Error: {result.error}"
+        
+        return result_df
     except Exception as e:
-        logger.error(f"Error in personality analysis: {str(e)}")
-        logger.exception("Detailed exception:")
-        # Return the original DataFrame if analysis fails
-        return df 
+        logger.error(f"Error in analyze_personality: {str(e)}")
+        # Return the original DataFrame with error information
+        result_df = df.copy()
+        result_df['personality_analysis'] = f"Error in analysis: {str(e)}"
+        return result_df 

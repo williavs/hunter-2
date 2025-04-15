@@ -17,67 +17,87 @@ def show_what_page():
     
     # Add a subtitle
     st.subheader("A Deep Sales Intelligence App.")
-    
-    # Main description
+
+    # What is this tool section
     st.markdown("""
-    ### What is this tool?
-    
-    Allows sellers to research prospects and create personalized emails in bulk. 
-    
-    ### How it works:
-    
-    1. **HUNTER** - Upload your contact data and analyze prospect personalities
-    2. **SPEAR** - Generate personalized emails based on the analysis
+    ## What is this tool? 🔍
+
+    > Allows sellers to research prospects and create personalized emails in bulk.
     """)
-    
-    # Before You Start section
-    st.info("""
-    ### Before You Start
-    
-    This app requires two API keys to function:
-    
-    - **OpenRouter API Key**: Provides access to Claude 3.7 Sonnet, which powers the personality analysis and email generation. [Get your OpenRouter API key here](https://openrouter.ai/settings/keys).
-    
-    - **Tavily API Key**: Enables intelligent web search to gather information about your prospects. [Get your Tavily API key here](https://app.tavily.com/).
-    
-    This is a generalized prototype application. If you'd like a custom implementation for your company, [contact Willy VanSickle](mailto:willyv3@v3-ai.com) or check out the [@V3Consult page](about.py).
-    """)
-    
-    st.markdown("""
-    ### Getting Started:
-    
-    1. Set up your API keys in the sidebar
-    2. Define your company context in HUNTER
-    3. Upload your prospect CSV with website URLs
-    4. Run personality analysis
-    5. Generate targeted emails in SPEAR
-    6. Download your results and get back to work! 
-    """)
-    
-    # Things to Keep in Mind section
-    st.warning("""
-    ### Things to Keep in Mind
-    
-    - **Start Small**: Begin with a small contact list (5-10 contacts) to learn how the system works
-    - **Size Limit**: The system cannot handle lists larger than 50 rows of contacts (lots of AI processing happening)
-    - **SEP Preparation**: Check what custom contact fields are available in your Sales Engagement Platform before trying to import
-    - **Email Content**: Generated emails contain only the body text - you'll need to add greetings and signatures in your SEP
-    """)
-    
+
+    # Use tabs for instructions
+    tab1, tab2 = st.tabs(["How to Use", "Getting Started"])
+
+    with tab1:
+        # How to use section
+        st.markdown("""
+        ## How to use this tool: 📝
+
+        ### 1. **HUNTER** 🎯
+            - Navigate to the HUNTER page, follow the instructions to add your selling companies context
+            - Upload your CSV of your PROSPECTS company data (export from 6Sense, Salesforce, Clay etc.)
+            - HUNTER will scrape company websites for you automatically, then use the context to perform a Deep Research Analysis on each contact
+
+        ### 2. **SPEAR** ⚡
+            - Navigate to the SPEAR page
+            - Select the contacts you want to write an email to
+            - SPEAR will generate 4 email drafts for you
+            - Name columns and export CSV with the results
+        """)
+
+    with tab2:
+        # Getting started section
+        st.markdown("""
+        ### Getting Started:
+
+        1. Set up your API keys in the sidebar
+        2. Define your company context in HUNTER
+        3. Upload your prospect CSV with website URLs
+        4. Run personality analysis
+        5. Generate targeted emails in SPEAR
+        6. Download your results and get back to work!
+        """)
+
+    # Use columns for info and warnings
+    col_info, col_warning = st.columns(2)
+
+    with col_info:
+        # Before You Start section
+        st.info("""
+        ### Before You Start
+
+        This app requires two API keys to function:
+
+        - **OpenRouter API Key**: Provides access to Claude 3.7 Sonnet, which powers the personality analysis and email generation. [Get your OpenRouter API key here](https://openrouter.ai/settings/keys).
+
+        - **Tavily API Key**: Enables intelligent web search to gather information about your prospects. [Get your Tavily API key here](https://app.tavily.com/).
+
+        """)
+
+    with col_warning:
+        # Things to Keep in Mind section
+        st.warning("""
+        ### Things to Keep in Mind
+
+        - **Start Small**: Begin with a small contact list (5-10 contacts) to learn how the system works
+        - **Size Limit**: The system cannot handle lists larger than 50 rows of contacts (lots of AI processing happening)
+        - **SEP Preparation**: Check what custom contact fields are available in your Sales Engagement Platform before trying to import
+        - **Email Content**: Generated emails contain only the body text - you'll need to add greetings and signatures in your SEP
+        """)
+
     # Add a visual separator
     st.markdown("---")
-    
+
     # Add buttons to navigate to other pages
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    col_btn1, col_btn2 = st.columns(2)
+
+    with col_btn1:
         if st.button("Start Analyzing Prospects", use_container_width=True):
-            st.switch_page("main.py")
+            st.switch_page("hunter.py")
     
-    with col2:
+    with col_btn2:
         if st.button("Learn about the AI used", use_container_width=True):
             st.switch_page("methodology.py")
-    
 
 # This ensures the page is displayed when loaded directly or through navigation
 if __name__ == "__main__":

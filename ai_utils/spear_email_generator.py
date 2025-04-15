@@ -4,36 +4,13 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Any, TypedDict, Union
 import pandas as pd
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
 from langchain.schema import HumanMessage, SystemMessage
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-class ChatOpenRouter(ChatOpenAI):
-    """ChatOpenAI wrapper specifically for OpenRouter."""
-    openai_api_key: Optional[SecretStr] = Field(default=None, exclude=True)
-    
-    @property
-    def lc_secrets(self) -> dict[str, str]:
-        return {"openai_api_key": "OPENROUTER_API_KEY"}
-    
-    def __init__(self,
-                 openai_api_key: Optional[str] = None,
-                 **kwargs):
-        openai_api_key = openai_api_key or os.environ.get("OPENROUTER_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OpenRouter API key is required")
-        
-        super().__init__(
-            openai_api_key=openai_api_key,
-            openai_api_base="https://openrouter.ai/api/v1",
-            **kwargs
-        )
-
 
 class SPEAREmailOutput(BaseModel):
     """Output format for all generated emails."""
@@ -50,18 +27,15 @@ class SPEAREmailGenerator:
     """
     
     def __init__(self, 
-                 openrouter_api_key: Optional[str] = None,
-                 model_name: str = "anthropic/claude-3.5-haiku-20241022:beta",
+                 model_name: str = "gpt-4.1",
                  max_concurrent: int = 10):
         """
-        Initialize the SPEAR Email Generator with API keys and models.
+        Initialize the SPEAR Email Generator with model settings.
         
         Args:
-            openrouter_api_key: API key for OpenRouter
             model_name: Model to use for generation
             max_concurrent: Maximum concurrent operations
         """
-        self.openrouter_api_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
         self.model_name = model_name
         self.max_concurrent = max_concurrent
         self.llm = None
@@ -76,10 +50,13 @@ class SPEAREmailGenerator:
     def _setup_llm(self):
         """Set up the language model client."""
         try:
-            self.llm = ChatOpenRouter(
-                openai_api_key=self.openrouter_api_key,
+            # Initialize ChatOpenAI with OpenAI API
+            self.llm = ChatOpenAI(
+                api_key=os.environ.get("OPENAI_API_KEY"),
                 model=self.model_name,
                 temperature=0.7,
+                streaming=False,
+                timeout=90  # Adding a longer timeout for reliability
             )
             logger.info(f"LLM initialized with model {self.model_name}")
         except Exception as e:
@@ -114,7 +91,10 @@ class SPEAREmailGenerator:
         You will generate four different JMM-style SPEAR emails for the same contact, each with a different strategic focus.
         Direct the emails to the individual contact, addressing their specific industry, role, and potential needs.
         
-        VERY IMPORTANT: You must format your response as a valid JSON object with the exact structure shown below - do not include any additional text, explanations, or formatting outside the JSON:
+        YOUR RESPONSE MUST BE VALID JSON. NO OTHER TEXT BEFORE OR AFTER. 
+        NO MARKDOWN. NO CODE BLOCKS. JUST PURE JSON THAT CAN BE PARSED DIRECTLY.
+        
+        RESPONSE FORMAT:
         {
           "emailbody1": "Social proof email focusing on similar customers who have succeeded with our product",
           "emailbody2": "Business pain/fear email emphasizing risks or opportunity costs",
@@ -122,7 +102,7 @@ class SPEAREmailGenerator:
           "emailbody4": "ROI/metrics email focusing on specific business outcomes with precise numbers"
         }
         
-        Use proper JSON with double quotes around keys and values, and ensure there are no trailing commas or syntax errors.
+        Use proper JSON with double quotes around keys and values, escape quotes within text values with backslash, and ensure there are no trailing commas or syntax errors.
         """
         
         # Human prompt template for generating all emails at once
@@ -148,7 +128,9 @@ class SPEAREmailGenerator:
         Remember to follow JMM principles: painfully short (max 3 sentences), precise metrics (32.6% not 30%), compressed format, and no pleasantries.
         Create metrics and business results that would be relevant to this specific contact.
         
-        EXTREMELY IMPORTANT: Return ONLY a valid JSON object with exactly this structure and nothing else:
+        YOUR ENTIRE RESPONSE MUST BE A SINGLE VALID JSON OBJECT, NOTHING ELSE.
+        
+        THE EXACT JSON STRUCTURE SHOULD BE:
         {{
           "emailbody1": "Your social proof email text here",
           "emailbody2": "Your business pain/fear email text here",
@@ -156,17 +138,17 @@ class SPEAREmailGenerator:
           "emailbody4": "Your ROI/metrics email text here"
         }}
 
-
         IMPORTANT: NOBODY CARES ABOUT WHAT THE SELLING COMPANY DOES. THEY ONLY CARE ABOUT WHAT THEY CAN DO FOR THEIR PROBLEMS. WHEN POSSIBLE EMAILS SHOW PROSPECTS WHAT THEY CAN DO WITH WHAT THEY CAN DO SELLERS PRODUCT. 
 
         IMPORTANT: NEVER FOCUS ON SELLING COMPANY OR SELLING COMPANY FEATURES, NO FEATURE DUMPING EVER. 
         
         
-        Don't add any explanations, markdown formatting, or extra text before or after the JSON. 
-        Make sure all JSON keys and string values use double quotes.
+        Your response must ONLY be the JSON object above. No explanations, no markdown, no code blocks - JUST THE JSON.
+        All string values should use properly escaped double quotes: \\" for quotes within text.
+        Make sure the JSON is valid and can be parsed by json.loads().
         """
     
-    async def test_openrouter_api_key(self) -> bool:
+    async def test_api_key(self) -> bool:
         """Test if the OpenRouter API key is valid."""
         try:
             test_message = "Test message to validate API key."
@@ -209,83 +191,49 @@ class SPEAREmailGenerator:
             
             # Generate the emails
             response = await self.llm.agenerate([messages])
-            content = response.generations[0][0].text
+            content = response.generations[0][0].text.strip()
             
             # Log the raw response for debugging
             logger.debug(f"Raw LLM response: {content}")
             
-            # Extract JSON from the response
-            emails = {}
-            
             try:
-                # Try to parse as JSON directly
-                emails = json.loads(content.strip())
-                logger.debug("Successfully parsed JSON directly")
-            except json.JSONDecodeError as direct_error:
-                logger.debug(f"Direct JSON parsing failed: {str(direct_error)}")
+                # Parse the JSON response
+                result = json.loads(content)
                 
-                # Try different parsing strategies
-                try:
-                    # Look for JSON in code blocks
-                    import re
-                    json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', content, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(1)
-                        logger.debug(f"Found JSON in code block: {json_str}")
-                        emails = json.loads(json_str)
-                    else:
-                        # Try to find anything that looks like a JSON object
-                        json_match = re.search(r'({[\s\S]*?})', content, re.DOTALL)
-                        if json_match:
-                            json_str = json_match.group(1)
-                            logger.debug(f"Found possible JSON object: {json_str}")
-                            # Clean up the JSON string
-                            clean_json = re.sub(r'(["{}\[\],:])\s+', r'\1', json_str)
-                            clean_json = re.sub(r'\s+(["{}\[\],:])', r'\1', clean_json)
-                            logger.debug(f"Cleaned JSON: {clean_json}")
-                            emails = json.loads(clean_json)
-                        else:
-                            # Last resort: parse the response manually
-                            logger.debug("Attempting manual extraction of email bodies")
-                            # Extract email bodies based on field names
-                            email_patterns = {
-                                "emailbody1": r'"emailbody1"\s*:\s*"(.*?)(?:"|$)',
-                                "emailbody2": r'"emailbody2"\s*:\s*"(.*?)(?:"|$)',
-                                "emailbody3": r'"emailbody3"\s*:\s*"(.*?)(?:"|$)',
-                                "emailbody4": r'"emailbody4"\s*:\s*"(.*?)(?:"|$)'
-                            }
-                            
-                            for key, pattern in email_patterns.items():
-                                match = re.search(pattern, content, re.DOTALL)
-                                if match:
-                                    emails[key] = match.group(1).replace('\\"', '"')
-                except Exception as parsing_error:
-                    logger.error(f"All JSON parsing attempts failed: {str(parsing_error)}")
-                    raise ValueError(f"Could not extract valid email content: {str(parsing_error)}")
-            
-            # Ensure all required fields are present with fallback defaults
-            result = {
-                "emailbody1": emails.get("emailbody1", "Error generating social proof email."),
-                "emailbody2": emails.get("emailbody2", "Error generating business pain email."),
-                "emailbody3": emails.get("emailbody3", "Error generating innovation email."),
-                "emailbody4": emails.get("emailbody4", "Error generating ROI email.")
-            }
-            
-            # Verify that we have actual content
-            empty_emails = [key for key, value in result.items() if not value.strip()]
-            if empty_emails:
-                logger.warning(f"The following emails were empty: {', '.join(empty_emails)}")
-            
-            return result
+                # Ensure all required fields are present
+                default_emails = {
+                    "emailbody1": "Error generating social proof email.",
+                    "emailbody2": "Error generating business pain email.",
+                    "emailbody3": "Error generating innovation email.",
+                    "emailbody4": "Error generating ROI email."
+                }
+                
+                # Merge with defaults to ensure all keys exist
+                for key in default_emails:
+                    if key not in result or not result[key].strip():
+                        result[key] = default_emails[key]
+                        logger.warning(f"Missing or empty {key} in LLM response, using default.")
+                
+                return result
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {str(e)}")
+                logger.error(f"Raw content causing error: {content}")
+                
+                return {
+                    "emailbody1": "Error: Invalid JSON response from email generation service.",
+                    "emailbody2": "Error: Invalid JSON response from email generation service.",
+                    "emailbody3": "Error: Invalid JSON response from email generation service.",
+                    "emailbody4": "Error: Invalid JSON response from email generation service."
+                }
             
         except Exception as e:
             logger.error(f"Error generating emails: {str(e)}")
-            # Return error messages as the email content for visibility
             return {
-                "emailbody1": f"Error: {str(e)}. Check logs for details.",
-                "emailbody2": f"Error: {str(e)}. Check logs for details.",
-                "emailbody3": f"Error: {str(e)}. Check logs for details.",
-                "emailbody4": f"Error: {str(e)}. Check logs for details."
+                "emailbody1": f"Error: {str(e)}",
+                "emailbody2": f"Error: {str(e)}",
+                "emailbody3": f"Error: {str(e)}",
+                "emailbody4": f"Error: {str(e)}"
             }
     
     def _infer_industry_from_department(self, department: str) -> str:
@@ -335,6 +283,12 @@ class SPEAREmailGenerator:
         # Determine which rows to process
         indices_to_process = selected_indices if selected_indices is not None else df.index.tolist()
         
+        # Validate indices to ensure they're within range
+        valid_indices = [idx for idx in indices_to_process if idx < len(df)]
+        if len(valid_indices) < len(indices_to_process):
+            logger.warning(f"Removed {len(indices_to_process) - len(valid_indices)} out-of-range indices")
+            indices_to_process = valid_indices
+        
         # Process contacts in true parallel
         async def process_contact(idx):
             try:
@@ -345,37 +299,71 @@ class SPEAREmailGenerator:
                 async with self.semaphore:
                     result = await self._generate_all_emails(contact_context, company_context)
                 
-                # Update the dataframe with results
-                for key, value in result.items():
-                    df.at[idx, key] = value
-                
-                return True
+                # Return the results instead of modifying df directly
+                return idx, result, None  # None means no error
             except Exception as e:
-                logger.error(f"Error processing contact at index {idx}: {str(e)}")
-                df.at[idx, "error"] = str(e)
-                return False
+                error_msg = str(e)
+                logger.error(f"Error processing contact at index {idx}: {error_msg}")
+                return idx, None, error_msg  # Return the error
         
         # Process all contacts concurrently in true parallel
         tasks = [process_contact(idx) for idx in indices_to_process]
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        
+        # Now safely update the dataframe sequentially after all async operations are complete
+        for idx, email_results, error in results:
+            if error:
+                # Log the error and add it to the dataframe
+                logger.error(f"Failed to generate emails for contact at index {idx}: {error}")
+                df.at[idx, "error"] = error
+            elif email_results:
+                # Add email results to the dataframe
+                for key, value in email_results.items():
+                    df.at[idx, key] = value
         
         return df
 
 
-async def generate_spear_emails(df: pd.DataFrame, company_context: Dict[str, Any] = None, selected_indices: List[int] = None, model_name: str = "anthropic/claude-3.5-haiku-20241022:beta") -> pd.DataFrame:
+async def generate_spear_emails(df: pd.DataFrame, company_context: Dict[str, Any] = None, selected_indices: List[int] = None, model_name: str = "gpt-4.1") -> pd.DataFrame:
     """
-    Generate SPEAR emails for contacts in a dataframe.
+    Generate SPEAR emails for contacts in a DataFrame.
     
     Args:
         df: DataFrame with contact information
-        company_context: Optional dictionary with company information (not used)
-        selected_indices: Indices of rows to process (None for all rows)
-        model_name: Name of the model to use
-    
+        company_context: Optional company context dictionary
+        selected_indices: Optional list of DataFrame indices to process (if None, process all)
+        model_name: Model to use for generation
+        
     Returns:
-        DataFrame with added email columns
+        DataFrame with original data plus generated emails
     """
     try:
+        # Validate input dataframe
+        if df is None or df.empty:
+            logger.error("Input dataframe is None or empty")
+            return pd.DataFrame()
+        
+        # Check if API key is available
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            logger.error("OpenRouter API key not found in environment variables")
+            error_df = df.copy()
+            for col in ["emailbody1", "emailbody2", "emailbody3", "emailbody4"]:
+                if col not in error_df.columns:
+                    error_df[col] = "Error: OpenRouter API key not found"
+            return error_df
+            
+        # Validate selected indices
+        if selected_indices:
+            # Make sure indices are within range
+            valid_indices = [idx for idx in selected_indices if idx < len(df)]
+            if len(valid_indices) < len(selected_indices):
+                logger.warning(f"Removed {len(selected_indices) - len(valid_indices)} out-of-range indices")
+                selected_indices = valid_indices
+                
+            if not selected_indices:
+                logger.error("No valid indices to process")
+                return df.copy()
+        
         logger.info(f"Initializing SPEAREmailGenerator with model {model_name}")
         generator = SPEAREmailGenerator(model_name=model_name)
         
@@ -391,8 +379,10 @@ async def generate_spear_emails(df: pd.DataFrame, company_context: Dict[str, Any
             if selected_indices:
                 has_content = False
                 for idx in selected_indices:
+                    if idx >= len(result_df):
+                        continue
                     for col in ["emailbody1", "emailbody2", "emailbody3", "emailbody4"]:
-                        if idx < len(result_df) and col in result_df.columns:
+                        if col in result_df.columns:
                             value = result_df.iloc[idx][col]
                             if isinstance(value, str) and value.strip():
                                 has_content = True
@@ -406,7 +396,7 @@ async def generate_spear_emails(df: pd.DataFrame, company_context: Dict[str, Any
             return result_df
         else:
             logger.error("Email generation returned None dataframe")
-            return df  # Return original dataframe if result is None
+            return df.copy()  # Return a copy of the original dataframe if result is None
     except Exception as e:
         logger.error(f"Failed to generate emails: {str(e)}", exc_info=True)
         # Return original dataframe with error columns

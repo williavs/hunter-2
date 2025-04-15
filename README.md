@@ -45,7 +45,7 @@ TAVILY_API_KEY=your_tavily_api_key
 
 1. Run the Streamlit application:
 ```bash
-streamlit run main.py
+streamlit run streamlit_app.py
 ```
 
 2. Configure your API keys in the sidebar (if not set in `.env` file)

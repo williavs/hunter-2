@@ -45,6 +45,26 @@ def guess_website_column(df):
         
     return best_match
 
+def guess_title_column(df):
+    """Make a best guess at which column contains title data using fuzzy matching"""
+    title_keywords = ['title', 'job title', 'position', 'role', 'job', 'designation']
+    
+    best_match = None
+    best_score = 0
+    
+    for col in df.columns:
+        for keyword in title_keywords:
+            score = fuzz.ratio(col.lower(), keyword)
+            if score > best_score:
+                best_score = score
+                best_match = col
+    
+    # Fallback to first column if no good match
+    if not best_match and len(df.columns) > 0:
+        best_match = df.columns[0]
+        
+    return best_match
+
 @st.dialog("Website Field Mapping", width="large")
 def website_mapping_dialog(df):
     """
@@ -66,6 +86,9 @@ def website_mapping_dialog(df):
     
     # Use fuzzy matching to guess the name column if no separate names detected
     guessed_name_col = guess_name_column(df) if not has_separate_names else None
+    
+    # Use fuzzy matching to guess the title column
+    guessed_title_col = guess_title_column(df)
     
     # Column selection section
     col1, col2 = st.columns(2)
@@ -110,6 +133,46 @@ def website_mapping_dialog(df):
                 index=all_columns.index(guessed_name_col) if guessed_name_col in all_columns else 0
             )
     
+    # Title column selection
+    title_column = st.selectbox(
+        "Select the column containing job titles (required):",
+        options=all_columns,
+        index=all_columns.index(guessed_title_col) if guessed_title_col in all_columns else 0
+    )
+    
+    # Add social media and company URL mapping
+    st.write("### Additional Profile Information (Optional)")
+    st.write("Map columns containing additional URLs (leave as 'None' if not available)")
+    
+    # Add option for 'None' to all columns list
+    columns_with_none = ["None"] + all_columns
+    
+    # Create two columns for a more compact layout
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # LinkedIn URL
+        linkedin_column = st.selectbox(
+            "LinkedIn Profile URL:",
+            options=columns_with_none,
+            index=0  # Default to 'None'
+        )
+        
+        # Facebook URL
+        facebook_column = st.selectbox(
+            "Facebook Profile URL:",
+            options=columns_with_none,
+            index=0
+        )
+    
+    with col2:
+        # Company LinkedIn URL
+        company_linkedin_column = st.selectbox(
+            "Company LinkedIn URL:",
+            options=columns_with_none,
+            index=0
+        )
+    
     # Fixed configuration values
     max_workers = 20
     timeout = 10
@@ -118,17 +181,32 @@ def website_mapping_dialog(df):
     
     # Store settings in session state
     if st.button("Start Website Scraping", key="dialog_start_scraping_button"):
+        # Check if title column exists and has data
+        if title_column not in df.columns:
+            st.error(f"Title column '{title_column}' not found in the data.")
+            return
+        
+        # Check if the title column has any non-empty values
+        if df[title_column].isna().all() or (df[title_column] == "").all():
+            st.error(f"Title column '{title_column}' is empty. Job titles are required for analysis.")
+            return
+        
         # Save mapping settings
         st.session_state.website_mapping = {
             "website_column": website_column,
             "name_column": name_column,
+            "title_column": title_column,  # Add title column to mapping
             "has_separate_names": has_separate_names,
             "first_name_column": first_name_column if has_separate_names else None,
             "last_name_column": last_name_column if has_separate_names else None,
             "max_workers": max_workers,
             "timeout": timeout,
             "extract_links": extract_links,
-            "max_content_length": max_content_length
+            "max_content_length": max_content_length,
+            # Add the new columns
+            "linkedin_column": None if linkedin_column == "None" else linkedin_column,
+            "facebook_column": None if facebook_column == "None" else facebook_column,
+            "company_linkedin_column": None if company_linkedin_column == "None" else company_linkedin_column
         }
         
         # If we have separate name columns, create a combined full name column
@@ -155,11 +233,26 @@ def website_mapping_dialog(df):
             df, cleaned_count = sanitize_dataframe_urls(df, website_column)
             if cleaned_count > 0:
                 st.success(f"✅ Sanitized {cleaned_count} URLs to ensure proper formatting.")
+                
+        # Copy additional URL columns to ensure they're in the final result
+        result_df = df.copy()
+        
+        # Add the additional URL columns if they don't exist
+        for col_name, source_col in [
+            ("linkedin_url", st.session_state.website_mapping["linkedin_column"]),
+            ("facebook_url", st.session_state.website_mapping["facebook_column"]),
+            ("company_linkedin_url", st.session_state.website_mapping["company_linkedin_column"]),
+            ("title", st.session_state.website_mapping["title_column"])  # Add title
+        ]:
+            if source_col and source_col in df.columns:
+                result_df[col_name] = df[source_col]
+            elif col_name not in result_df.columns:
+                result_df[col_name] = ""
         
         # Trigger scraping
         with st.spinner("Scraping websites. This might take a while..."):
-            result_df = process_websites_parallel(
-                df, 
+            processed_df = process_websites_parallel(
+                result_df, 
                 website_column, 
                 max_workers=max_workers,
                 timeout=timeout,
@@ -168,7 +261,7 @@ def website_mapping_dialog(df):
             )
             
             # Store the result in session state
-            st.session_state.scraped_df = result_df
+            st.session_state.scraped_df = processed_df
             st.session_state.name_column = name_column
             
             # Rerun to close the dialog and update the main app
