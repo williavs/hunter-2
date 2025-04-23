@@ -8,7 +8,7 @@ tqdm
 urllib3
 beautifulsoup4
 langchain==0.3.23
-langchain_openai
+langchain_openai==0.3.9
 langchain_community
 langgraph
 tavily-python

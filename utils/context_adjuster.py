@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 import re
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from ai_utils.new_company_context_agent import ChatOpenRouter
+from old_files.new_company_context_agent import ChatOpenRouter
 
 # Load environment variables
 load_dotenv()

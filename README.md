@@ -127,6 +127,35 @@ streamlit run streamlit_app.py
 
 10. Download the enriched data as CSV when processing is complete
 
+## Running with Docker
+
+1.  **Build the Docker image manually (optional):**
+    ```bash
+    docker build -t hunter-app .
+    ```
+
+2.  **Easiest way (Recommended, especially for Mac users):**
+    1. Make the script executable (first time only):
+       ```bash
+       chmod +x run_docker.sh
+       ```
+    2. Run the app:
+       ```bash
+       ./run_docker.sh
+       ```
+    3. Open [http://localhost:8501](http://localhost:8501) in your browser.
+    4. Enter your API key(s) in the sidebar when prompted.
+
+3.  **For Mac users:**
+    - You can also use the included AppleScript to launch the app in Terminal:
+      1. Double-click `RunDockerApp.applescript` or open it with Script Editor and run it.
+      2. This will open Terminal, navigate to the project directory, and run the Docker script for you.
+    - Make sure Docker Desktop is running before you start.
+
+4.  **Note:**
+    - API keys need to be entered via the sidebar UI when running via Docker, as the `.env` file is not used.
+    - If you encounter permission issues, ensure you have rights to execute scripts and access Docker.
+
 ## Technical Documentation
 
 - **OpenAI Web Search**: This project utilizes [OpenAI's Web Search capability](https://platform.openai.com/docs/api-reference/responses/web-search) through the Responses API, allowing models to search the web for the latest information before generating a response.

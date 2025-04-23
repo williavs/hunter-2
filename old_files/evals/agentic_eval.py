@@ -14,8 +14,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import our custom OpenRouter connection and both analysis functions
-from ai_utils.company_context_workflow import ChatOpenRouter, analyze_company_context
-from ai_utils.new_company_context_agent import analyze_company_context_agentic
+from old_files.company_context_workflow import ChatOpenRouter, analyze_company_context
+from old_files.new_company_context_agent import analyze_company_context_agentic
 
 # Setup logging
 logging.basicConfig(

@@ -11,7 +11,7 @@ import langsmith.utils
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import our custom OpenRouter connection
-from ai_utils.company_context_workflow import ChatOpenRouter, analyze_company_context
+from old_files.company_context_workflow import ChatOpenRouter, analyze_company_context
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

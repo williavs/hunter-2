@@ -14,6 +14,9 @@ from typing import Dict, List, Any, Optional, Union
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
+from dotenv import dotenv_values
+import openai # Add direct OpenAI client import
+import streamlit as st
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +26,11 @@ def analyze_company(
     company_url: str, 
     company_name: str,
     target_geography: Optional[str] = None,
-    model_name: str = "gpt-4.1",
+    model_name: str = "openai/gpt-4.1",
+    ai_mode: str = "Proxy",
+    openai_api_key: Optional[str] = None,
+    proxy_api_key: Optional[str] = None,
+    proxy_base_url: str = "https://llm.data-qa.justworks.com",
 ) -> Dict[str, Any]:
     """
     Analyze a company using OpenAI web search to create a detailed context profile.
@@ -32,7 +39,11 @@ def analyze_company(
         company_url: URL of the company website to analyze
         company_name: Name of the company (explicitly provided)
         target_geography: Optional target geography to focus analysis on
-        model_name: Model to use for analysis (defaults to GPT-4.1)
+        model_name: Model to use for analysis (defaults to openai/gpt-4.1)
+        ai_mode: Mode of operation (Proxy or OpenAI)
+        openai_api_key: API key for OpenAI mode
+        proxy_api_key: API key for Proxy mode
+        proxy_base_url: Base URL for Proxy mode
         
     Returns:
         Dict containing the analysis results
@@ -40,26 +51,63 @@ def analyze_company(
     try:
         logger.info(f"Starting company analysis for {company_name} (URL: {company_url})")
         
+        # --- Use explicit parameters for API key and model selection ---
+        mode = ai_mode
+        if mode == "OpenAI":
+            api_key = openai_api_key
+            model_name = "gpt-4.1"
+            base_url = None
+        else:
+            api_key = proxy_api_key
+            model_name = "openai/gpt-4.1"
+            base_url = proxy_base_url
+        if not api_key:
+            raise ValueError(f"No API key found for mode: {mode}")
+        
         # Step 1: Initialize tools - Always use OpenAI web search
         logger.info("Using OpenAI web search")
-        search_llm = ChatOpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-4.1" # Use a cost-effective model for search
+        search_llm_kwargs = dict(
+            api_key=api_key,
+            model=model_name,
+            use_responses_api=True,
+            timeout=60
         )
-        # Bind the web search tool
-        search_tool = search_llm.bind_tools([{"type": "web_search_preview"}])
-            
-        # Initialize the main LLM for analysis
-        llm = ChatOpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
+        if base_url:
+            search_llm_kwargs["base_url"] = base_url
+        search_llm = ChatOpenAI(**search_llm_kwargs)
+        llm_kwargs = dict(
+            api_key=api_key,
             model=model_name,
             temperature=0.1,
             streaming=False,
-            timeout=90  # Adding a longer timeout for reliability
+            timeout=90
         )
+        if base_url:
+            llm_kwargs["base_url"] = base_url
+        llm = ChatOpenAI(**llm_kwargs)
         
+        # Initialize direct OpenAI client for specific API calls
+        try:
+            if mode == "OpenAI":
+                direct_openai_client = openai.OpenAI(
+                    api_key=api_key,
+                    # No base_url for OpenAI direct
+                )
+            else:
+                direct_openai_client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url=proxy_base_url + "/v1" # Direct client needs /v1
+                )
+        except Exception as client_error:
+            logger.error(f"Failed to initialize direct OpenAI client: {client_error}")
+            raise client_error # Re-raise the error to stop execution if client fails
+            
         # Step 2: Generate search queries using the provided company name
         logger.info(f"Using company name: {company_name}")
+        if api_key:
+            logger.info(f"Using API key: {api_key[:5]}...{api_key[-4:]}")
+        else:
+            logger.warning("API_KEY not found or loaded.")
         
         # Step 3: Generate search queries
         search_queries = [
@@ -73,24 +121,49 @@ def analyze_company(
         if target_geography:
             search_queries.append(f"{company_name} business {target_geography} market presence")
         
-        # Step 4: Execute searches
+        # Step 4: Execute searches using direct OpenAI client
         logger.info(f"Executing searches for {company_name}")
         all_search_results = []
+        web_search_tool = [{"type": "web_search_preview"}]
         
         for query in search_queries:
             try:
                 logger.info(f"Searching for: {query}")
-                # Format for OpenAI web search
-                search_query = f"Search for information about: {query}"
-                logger.info(f"Search query sent to OpenAI: {search_query}")
-                response = search_tool.invoke(search_query)
+                # Use direct OpenAI client for web search
+                response = direct_openai_client.responses.create(
+                    model=model_name,
+                    tools=web_search_tool,
+                    input=query
+                )
                 
-                # Extract results from OpenAI response
-                processed_results = process_openai_search_results(response, query)
-                all_search_results.extend(processed_results)
-                
+                # Simplified processing: Extract text content directly
+                text_content = ""
+                search_sources = []
+                if response.output:
+                    for item in response.output:
+                        if item.type == "message" and item.content:
+                            for content_block in item.content:
+                                if content_block.type == "output_text":
+                                    text_content += content_block.text + "\n"
+                                    # Extract citations if needed (example)
+                                    if hasattr(content_block, 'annotations'):
+                                        for annotation in content_block.annotations:
+                                            if annotation.type == 'url_citation':
+                                                search_sources.append(annotation.url)
+                                                
+                # Add to results list (adapt format as needed)
+                if text_content:
+                     all_search_results.append({
+                         "query": query,
+                         "title": "Web Search Result", # Simplified title
+                         "content": text_content.strip(),
+                         "source": ", ".join(search_sources) or "Web Search"
+                     })
+                else:
+                    logger.warning(f"No text content found in search response for query: {query}")
+
             except Exception as e:
-                logger.error(f"Error executing search '{query}': {str(e)}")
+                logger.error(f"Error executing search '{query}' with direct client: {str(e)}")
         
         # Log search result count
         logger.info(f"Found {len(all_search_results)} search results")
@@ -187,37 +260,54 @@ YOUR RESPONSE MUST BE A SIMPLE NUMBERED LIST WITH SHORT CONCRETE PHRASES ONLY:""
                 f"{company_name} solutions"
             ]
             
-        # Step 7: Conduct second-stage search for geographic complexity
+        # Step 7: Conduct second-stage search for geographic complexity using direct OpenAI client
         geographic_context_results = []
-        
-        # Only proceed with second search if target geography is specified
         if target_geography:
             logger.info(f"Executing second-stage search for geographic complexities in {target_geography}")
-            
-            # Generate simple, direct search queries combining the core service and geography
             geo_search_queries = []
-            
+            if 'valid_problems' not in locals(): # Handle case where Step 6 failed
+                 valid_problems = [f"{company_name} general regulations"] # Basic fallback
             for phrase in valid_problems:
-                # Create a clean search query without quotes or complex formatting
                 geo_search_queries.append(f"{phrase} regulations {target_geography}")
-                
-            # Add a focused industry-specific search query
             geo_search_queries.append(f"business compliance requirements {target_geography}")
             
-            # Execute geography-specific searches
             for query in geo_search_queries:
                 try:
                     logger.info(f"Searching for geographic context: {query}")
-                    search_query = f"Search for information about: {query}"
-                    logger.info(f"Geographic search query sent to OpenAI: {search_query}")
-                    response = search_tool.invoke(search_query)
+                    # Use direct OpenAI client for web search
+                    response = direct_openai_client.responses.create(
+                        model=model_name,
+                        tools=web_search_tool,
+                        input=query
+                    )
                     
-                    # Process and add to results
-                    geo_results = process_openai_search_results(response, query)
-                    geographic_context_results.extend(geo_results)
-                    
+                    # Simplified processing: Extract text content directly
+                    text_content = ""
+                    search_sources = []
+                    if response.output:
+                        for item in response.output:
+                            if item.type == "message" and item.content:
+                                for content_block in item.content:
+                                    if content_block.type == "output_text":
+                                        text_content += content_block.text + "\n"
+                                        if hasattr(content_block, 'annotations'):
+                                            for annotation in content_block.annotations:
+                                                if annotation.type == 'url_citation':
+                                                    search_sources.append(annotation.url)
+                                                    
+                    # Add to results list (adapt format as needed)
+                    if text_content:
+                        geographic_context_results.append({
+                            "query": query,
+                            "title": "Geographic Search Result",
+                            "content": text_content.strip(),
+                            "source": ", ".join(search_sources) or "Web Search"
+                        })
+                    else:
+                         logger.warning(f"No text content found in geographic search response for query: {query}")
+
                 except Exception as e:
-                    logger.error(f"Error executing geographic context search '{query}': {str(e)}")
+                    logger.error(f"Error executing geographic context search '{query}' with direct client: {str(e)}")
             
             logger.info(f"Found {len(geographic_context_results)} geographic context search results")
             
@@ -258,14 +348,10 @@ YOUR RESPONSE MUST BE A SIMPLE NUMBERED LIST WITH SHORT CONCRETE PHRASES ONLY:""
         enhanced_context += f"- Original search queries: {', '.join(search_queries)}\n"
         if target_geography:
             enhanced_context += f"- Target geography: {target_geography}\n"
-            enhanced_context += f"- Geographic search queries: {', '.join(geo_search_queries)}\n"
+            # Ensure geo_search_queries is defined before joining
+            geo_queries_str = ', '.join(geo_search_queries) if 'geo_search_queries' in locals() else 'N/A'
+            enhanced_context += f"- Geographic search queries: {geo_queries_str}\n"
             enhanced_context += f"- Geographic context results: {len(geographic_context_results)}\n"
-        
-        # Add search confidence information
-        search_quality = min(len(all_search_results) / 15, 1.0)
-        confidence_level = "High" if len(all_search_results) > 10 else "Medium" if len(all_search_results) > 5 else "Low"
-        enhanced_context += f"- Search quality metric: {search_quality:.2f}\n"
-        enhanced_context += f"- Confidence level: {confidence_level}\n"
         
         # Add the enhanced context to results_text
         results_text += enhanced_context
@@ -372,28 +458,29 @@ Also provide a one-line statement of their primary industry focus.
             "description": extract_description(analysis),
             "url": company_url,
             "target_geography": target_geography if target_geography else "Global",
-            "search_quality": min(len(all_search_results) / 15, 1.0),  # Simple quality metric
-            "confidence": "High" if len(all_search_results) > 10 else "Medium" if len(all_search_results) > 5 else "Low",
             "analysis": analysis,
             # Add enhanced metadata to the result
-            "extracted_services": valid_problems,
+            "extracted_services": valid_problems if 'valid_problems' in locals() else [],
             "search_queries": search_queries,
-            "geographic_queries": geo_search_queries if target_geography else []
+            "geographic_queries": geo_search_queries if 'geo_search_queries' in locals() and target_geography else []
         }
         
         logger.info(f"Analysis completed for {company_url}")
         return result
         
     except Exception as e:
-        error_msg = f"Error analyzing company: {str(e)}"
+        error_type = type(e).__name__
+        error_msg = f"Error analyzing company ({error_type}): {str(e)}"
         logger.error(error_msg)
+        # Also log the full traceback for detailed debugging
+        import traceback
+        logger.error(traceback.format_exc())
+        
         return {
             "name": extract_domain_from_url(company_url),
-            "description": "Error analyzing company. See errors for details.",
+            "description": f"Error analyzing company ({error_type}). See logs for details.",
             "url": company_url,
             "target_geography": target_geography if target_geography else "Global",
-            "search_quality": 0,
-            "confidence": "None",
             "errors": [error_msg]
         }
 
@@ -516,8 +603,12 @@ def process_openai_search_results(response, original_query):
 async def analyze_company_context(
     company_url: str, 
     company_name: str,
-    model_name: str = "gpt-4.1", 
-    target_geography: str = None
+    model_name: str = "openai/gpt-4.1", 
+    target_geography: str = None,
+    ai_mode: str = "Proxy",
+    openai_api_key: Optional[str] = None,
+    proxy_api_key: Optional[str] = None,
+    proxy_base_url: str = "https://llm.data-qa.justworks.com",
 ) -> Dict[str, Any]:
     """
     Analyze a company based on its website URL using OpenAI web search.
@@ -525,8 +616,12 @@ async def analyze_company_context(
     Args:
         company_url: URL of the company website
         company_name: Name of the company (explicitly provided)
-        model_name: Name of the model to use for analysis (defaults to GPT-4.1)
+        model_name: Name of the model to use for analysis (defaults to openai/gpt-4.1)
         target_geography: User-specified target geography or market
+        ai_mode: Mode of operation (Proxy or OpenAI)
+        openai_api_key: API key for OpenAI mode
+        proxy_api_key: API key for Proxy mode
+        proxy_base_url: Base URL for Proxy mode
         
     Returns:
         Dictionary containing company context information
@@ -544,6 +639,10 @@ async def analyze_company_context(
             company_name=company_name,
             target_geography=target_geography,
             model_name=model_name,
+            ai_mode=ai_mode,
+            openai_api_key=openai_api_key,
+            proxy_api_key=proxy_api_key,
+            proxy_base_url=proxy_base_url,
         )
         
         logger.info(f"Completed company analysis for {company_name}")

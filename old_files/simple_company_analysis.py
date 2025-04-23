@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Import the analyzer
-from ai_utils.new_company_context_agent import analyze_company_context_agentic
+from old_files.new_company_context_agent import analyze_company_context_agentic
 
 def analyze_company(url, target_geography=None):
     """Analyze a company and print the results."""

@@ -50,28 +50,23 @@ def show_what_page():
         st.markdown("""
         ### Getting Started:
 
-        1. Set up your API keys in the sidebar
-        2. Define your company context in HUNTER
-        3. Upload your prospect CSV with website URLs
-        4. Run personality analysis
-        5. Generate targeted emails in SPEAR
-        6. Download your results and get back to work!
+        1. Define your company context in HUNTER
+        2. Upload your prospect CSV with website URLs
+        3. Run personality analysis
+        4. Generate targeted emails in SPEAR
+        5. Download your results and get back to work!
         """)
 
     # Use columns for info and warnings
     col_info, col_warning = st.columns(2)
 
     with col_info:
-        # Before You Start section
+        # Before You Start section (removed API key and AI info)
         st.info("""
         ### Before You Start
 
-        This app requires two API keys to function:
-
-        - **OpenRouter API Key**: Provides access to Claude 3.7 Sonnet, which powers the personality analysis and email generation. [Get your OpenRouter API key here](https://openrouter.ai/settings/keys).
-
-        - **Tavily API Key**: Enables intelligent web search to gather information about your prospects. [Get your Tavily API key here](https://app.tavily.com/).
-
+        - Start with a small contact list to get familiar with the workflow.
+        - Make sure your CSV includes company website URLs for best results.
         """)
 
     with col_warning:

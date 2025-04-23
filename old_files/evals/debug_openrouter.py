@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message
 logger = logging.getLogger(__name__)
 
 # Import the company context module
-from ai_utils.new_company_context_agent import ChatOpenRouter, analyze_company_context_agentic
+from old_files.new_company_context_agent import ChatOpenRouter, analyze_company_context_agentic
 
 def test_openrouter():
     """Test the OpenRouter connection."""

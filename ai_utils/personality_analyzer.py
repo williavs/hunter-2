@@ -30,23 +30,20 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.tools import tool
 import json
 import re
+import openai # Add direct OpenAI client import
+import streamlit as st
 
 # Import fuzzy matching library
 from rapidfuzz import fuzz
 
-# Import dotenv and load environment variables
-from dotenv import load_dotenv
-# Load environment variables from .env file
-load_dotenv()
-
-# Configure logger
-logger = logging.getLogger(__name__)
-
 # Updated imports for the current LangGraph API
 from langgraph.graph import StateGraph, END
 
+logger = logging.getLogger(__name__)
+
 class ContactInfo(BaseModel):
     """Contact information for a person to analyze."""
+    id: str = Field(description="Unique identifier for the contact")
     name: str = Field(description="Full name of the contact")
     email: Optional[str] = Field(default=None, description="Email address")
     linkedin_url: Optional[str] = Field(default=None, description="LinkedIn profile URL")
@@ -65,39 +62,40 @@ class ContactInfo(BaseModel):
         
         This method ensures required fields are always present and handles missing data gracefully.
         """
-        # Ensure required fields have fallbacks
         data = row.copy()
-        
-        # Check for full_name first (for combined first/last name fields)
+        # Assign or generate a unique id
+        if "id" in data and data["id"]:
+            data["id"] = str(data["id"])
+        else:
+            import uuid
+            data["id"] = str(uuid.uuid4())
+        # Name logic as before
         if "full_name" in data and data["full_name"]:
             data["name"] = data["full_name"]
-        # If name is missing, try to generate one from other fields or use a placeholder
         elif "name" not in data or not data["name"]:
-            # Check for first_name and last_name fields to combine them
             if "first_name" in data and "last_name" in data and data["first_name"] and data["last_name"]:
                 data["name"] = f"{data['first_name']} {data['last_name']}".strip()
             elif "email" in data and data["email"]:
-                # Extract name from email (user part)
                 email_parts = data["email"].split('@')
                 if len(email_parts) > 0:
                     data["name"] = email_parts[0].replace(".", " ").title()
             elif "company" in data and data["company"]:
-                # Use company name as fallback
                 data["name"] = f"Contact at {data['company']}"
             else:
-                # Use a generated unique identifier as absolute fallback
-                import uuid
-                data["name"] = f"Contact-{str(uuid.uuid4())[:8]}"
-        
-        # Only include fields that are in the model
+                data["name"] = f"Contact-{data['id'][:8]}"
+        title = data.get("title", None)
+        if title is not None:
+            if pd.isna(title):
+                data["title"] = None
+            elif not isinstance(title, str):
+                data["title"] = str(title)
         model_fields = cls.__annotations__.keys()
         filtered_data = {k: v for k, v in data.items() if k in model_fields}
-        
         return cls(**filtered_data)
 
 class AnalysisResult(BaseModel):
     """Results of personality analysis."""
-    contact_id: str
+    contact_id: str  # This will now be the unique id
     personality_analysis: str
     error: Optional[str] = None
     search_queries_used: List[str] = Field(default_factory=list)
@@ -122,47 +120,75 @@ class PersonalityAnalyzer:
     _global_search_cache = {}
     
     def __init__(self, 
-                 max_concurrent: int = 10
+                 max_concurrent: int = 10,
+                 ai_mode: str = "Proxy",
+                 openai_api_key: Optional[str] = None,
+                 proxy_api_key: Optional[str] = None,
+                 proxy_base_url: str = "https://llm.data-qa.justworks.com"
               ):
         """
         Initialize the personality analyzer.
-        
         Args:
             max_concurrent: Maximum number of concurrent analyses
+            ai_mode: Mode of operation (Proxy or OpenAI)
+            openai_api_key: API key for OpenAI mode
+            proxy_api_key: API key for Proxy mode
+            proxy_base_url: Base URL for Proxy mode
         """
-        # Configuration properties
         self.max_concurrent = max_concurrent
-        
+        self.ai_mode = ai_mode
+        self.openai_api_key = openai_api_key
+        self.proxy_api_key = proxy_api_key
+        self.proxy_base_url = proxy_base_url
         # Initialize search cache using class variable
         self._search_cache = PersonalityAnalyzer._global_search_cache
-        
         # Set up tools based on configuration
         self._initialize_tools()
-        
         # Build the workflow
         self.workflow = self._build_workflow()
     
     def _initialize_tools(self):
         """Initialize the search tool and LLM based on the current configuration."""
-        # Set up search tool using OpenAI with web search capability
-        logger.debug("Initializing OpenAI search tool")
-        # Initialize OpenAI ChatModel with web search
-        self.search_llm = ChatOpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-4.1"
-        )
-        # Bind the web search tool
-        self.search_tool = self.search_llm.bind_tools([{"type": "web_search_preview"}])
-    
-        # Set up the LLM for analysis - also using gpt-4.1 directly from OpenAI
-        logger.debug(f"Initializing LLM with model: gpt-4.1")
-        self.llm = ChatOpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-4.1",
+        mode = self.ai_mode
+        if mode == "OpenAI":
+            api_key = self.openai_api_key
+            model = "gpt-4.1"
+            base_url = None
+        else:
+            api_key = self.proxy_api_key
+            model = "openai/gpt-4.1"
+            base_url = self.proxy_base_url
+        if not api_key:
+            raise ValueError(f"No API key found for mode: {mode}")
+        llm_kwargs = dict(
+            api_key=api_key,
+            model=model,
             temperature=0.1,
             streaming=False,
-            timeout=90  # Adding a longer timeout for reliability
+            timeout=90
         )
+        if base_url:
+            llm_kwargs["base_url"] = base_url
+        self.llm = ChatOpenAI(**llm_kwargs)
+        logger.debug(f"Initializing LLM with model: {model} (mode: {mode})")
+        # Initialize direct OpenAI client here as well
+        try:
+            if mode == "OpenAI":
+                self.direct_openai_client = openai.OpenAI(
+                    api_key=api_key,
+                    # No base_url for OpenAI direct
+                )
+            else:
+                self.direct_openai_client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url=self.proxy_base_url + "/v1" # Direct client needs /v1
+                )
+        except Exception as client_error:
+            logger.error(f"Failed to initialize direct OpenAI client in PersonalityAnalyzer: {client_error}")
+            self.direct_openai_client = None 
+            
+        # Build the workflow
+        self.workflow = self._build_workflow()
     
     def enable_tracing(self, project_name="email-gtmwiz-personality-analysis"):
         """
@@ -191,10 +217,19 @@ class PersonalityAnalyzer:
         return True
     
     async def _search_task(self, state: PersonalityState) -> PersonalityState:
-        """Execute comprehensive web search for the contact using built-in OpenAI web search."""
+        """Execute comprehensive web search for the contact using direct OpenAI client."""
         contact_data = state["contact_data"]
         company_context = state.get("company_context", {})
         
+        # Check if direct client was initialized successfully
+        if not self.direct_openai_client:
+            error_msg = "Direct OpenAI client not initialized. Cannot perform web search."
+            logger.error(error_msg)
+            state["errors"].append(error_msg)
+            state["search_results"] = [] # Ensure search_results is initialized
+            state["search_queries"] = [] # Ensure search_queries is initialized
+            return state # Return early or handle as appropriate
+
         # Check if website content is missing
         has_website_content = contact_data.get("website_content", "").strip() != ""
         
@@ -282,66 +317,94 @@ Important: Make reasonable inferences even with limited information. Look for cl
 """           
         search_prompts.append(company_prompt)
         
-        search_results = []
-        
-        # Execute searches in parallel
-        async def execute_search(prompt: str):
+        # --- Start of Search Execution Update ---
+        search_results_list = [] # Store results in a list of dicts like simple_analyzer
+        web_search_tool_def = [{"type": "web_search_preview"}] # Tool definition
+        # Fix: Use correct model name for OpenAI vs Proxy mode
+        if self.ai_mode == "OpenAI":
+            model_for_search = "gpt-4.1"
+        else:
+            model_for_search = "openai/gpt-4.1"
+
+        # Execute searches in parallel using direct client
+        async def execute_search_direct(prompt: str):
             try:
-                # Normalize query to improve cache hits
                 query_str = str(prompt).strip().lower()
-                
-                # Check if we have a cached result for this query
                 if query_str in self._search_cache:
                     logger.debug(f"Using cached result for search: {query_str[:50]}...")
-                    return self._search_cache[query_str]
+                    # Return cached result in the expected new format if needed
+                    # For now, just return the cached dict directly if format matches
+                    return self._search_cache[query_str] 
+
+                logger.debug(f"Executing new direct search: {query_str[:50]}...")
+                response = await asyncio.to_thread(
+                    self.direct_openai_client.responses.create,
+                    model=model_for_search,
+                    tools=web_search_tool_def,
+                    input=prompt
+                )
                 
-                logger.debug(f"Executing new search: {query_str[:50]}...")
-          
-                    # Format for OpenAI web search
-                search_query = f"Search for information about: {prompt}"
-                response = await asyncio.to_thread(self.search_tool.invoke, search_query)
+                # Process direct OpenAI response
+                text_content = ""
+                search_sources = []
+                if response.output:
+                    for item in response.output:
+                        if item.type == "message" and item.content:
+                            for content_block in item.content:
+                                if content_block.type == "output_text":
+                                    text_content += content_block.text + "\n"
+                                    if hasattr(content_block, 'annotations'):
+                                        for annotation in content_block.annotations:
+                                            if annotation.type == 'url_citation':
+                                                search_sources.append(annotation.url)
+
+                result_item = {
+                    "query": prompt,
+                    "title": "Web Search Result", # Simplified title
+                    "content": text_content.strip(),
+                    "source": ", ".join(search_sources) or "Web Search"
+                }
                 
-                # Process OpenAI results into a format compatible with our existing code
-                processed_results = self._process_openai_search_results(response)
+                # Cache the processed result
+                if text_content: # Only cache if we got content
+                    self._search_cache[query_str] = result_item
                 
-                result = {"query": prompt, "results": processed_results}
-            
-                # Cache the result
-                self._search_cache[query_str] = result
-                
-                return result
+                return result_item
             except Exception as e:
-                logger.error(f"Search error for prompt: '{prompt[:50]}...': {str(e)}")
-                return {"query": str(prompt), "results": [], "error": str(e)}
+                logger.error(f"Direct search error for prompt: '{prompt[:50]}...': {str(e)}")
+                return {"query": prompt, "error": str(e), "content": f"Search Error: {str(e)}", "source": "Error"}
         
-        # Run searches concurrently with a semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(3)  # Limit to 3 concurrent searches for stability
-        
-        async def search_with_semaphore(prompt):
+        semaphore = asyncio.Semaphore(3)  # Limit concurrency
+        async def search_with_semaphore_direct(prompt):
             async with semaphore:
-                return await execute_search(prompt)
-        
-        # Create tasks for each search prompt
-        tasks = [search_with_semaphore(prompt) for prompt in search_prompts]
+                return await execute_search_direct(prompt)
+
+        tasks = [search_with_semaphore_direct(prompt) for prompt in search_prompts]
         search_outputs = await asyncio.gather(*tasks)
         
-        # Collect results
+        # Collect results (append directly to list)
         for output in search_outputs:
             if "error" not in output:
-                search_results.append(output)
+                 search_results_list.append(output)
             else:
-                logger.warning(f"Search error: {output.get('error')}")
+                logger.warning(f"Search error encountered: {output.get('error')}")
                 state["errors"].append(f"Search error: {output.get('error')}")
+                # Optionally add error result to list for context?
+                search_results_list.append(output)
         
-        state["search_results"] = search_results
+        # --- End of Search Execution Update ---
         
-        # Add the search results to the messages
+        # Store results in state (adjusting format if needed for downstream)
+        # The analysis task now needs to handle a list of dicts directly
+        state["search_results"] = search_results_list 
+        
+        # Add a system message indicating search completion
         state["messages"].append({
             "role": "system",
-            "content": f"Search results: {len(search_results)} comprehensive searches returned information."
+            "content": f"Search completed. Found {len(search_results_list)} results."
         })
         
-        # For backward compatibility, store original search prompts as search_queries
+        # Keep original search prompts for reference
         state["search_queries"] = [prompt for prompt in search_prompts]
         
         return state
@@ -491,10 +554,11 @@ Important: Make reasonable inferences even with limited information. Look for cl
         contact_data = state["contact_data"]
         search_results = state["search_results"]
         company_context = state.get("company_context", {})
-        
+        contact_id = contact.get("id", "")
         contact_name = contact.get("name", "Unknown")
-        has_website_content = contact_data.get("website_content", "").strip() != ""
-        
+        # Check if website content was present (assuming it might be added to search_results)
+        has_website_content = any(r.get("source") == "website" for r in search_results if isinstance(r, dict))
+
         if not search_results:
             # Create a more informative message based on whether website content was available
             if not has_website_content:
@@ -504,7 +568,7 @@ Important: Make reasonable inferences even with limited information. Look for cl
                 
             state["errors"].append("No search results available for analysis")
             state["analysis"] = {
-                "contact_id": contact_name,
+                "contact_id": contact_id,
                 "personality_analysis": analysis_message,
                 "search_queries_used": [],
                 "search_results": []
@@ -512,47 +576,30 @@ Important: Make reasonable inferences even with limited information. Look for cl
             state["complete"] = True
             return state
         
-        # Prepare search results for prompt - more efficiently and handling the new format
+        # Prepare search results for prompt - ADAPTED FOR LIST OF DICTS
         results_text = ""
-        has_website_content = False
-        
-        # Gather all results
-        for item in search_results:
-            source = item.get('source', 'Unknown Source')
-            title = item.get('title', 'No Title')
-            
-            if source.lower() == 'website':
-                has_website_content = True
-            
-            results_text += f"Source: {source}\nTitle: {title}\n"
-            
-            # Get the content from the item
-            content = item.get('content', 'No content')
-            
-            # Check for company name mentions to ensure they're not truncated
-            company_name = None
-            if company_context and 'company_name' in company_context:
-                company_name = company_context['company_name']
-            
-            if len(content) > 10000:
-                # For very long content, include first and middle and last parts
-                # to avoid truncating important information
-                first_part = content[:6000]
-                last_part = content[-6000:]
-                
-                # If company name is in the middle part, extract that section too
-                middle_part = ""
-                if company_name and company_name.lower() in content.lower()[600:-600]:
-                    # Find the approximate position of the company name in the middle section
-                    middle_idx = content.lower()[600:-600].find(company_name.lower()) + 600
-                    # Extract a section around the company mention
-                    start_idx = max(0, middle_idx - 150)
-                    end_idx = min(len(content), middle_idx + len(company_name) + 150)
-                    middle_part = f"... [Important company mention: {content[start_idx:end_idx]}] ..."
-                
-                results_text += f"Content: {first_part}... {middle_part} ...{last_part}\n\n"
-            else:
-                results_text += f"Content: {content}\n\n"
+        for i, result_item in enumerate(search_results):
+             source = result_item.get('source', 'Unknown Source')
+             title = result_item.get('title', 'No Title')
+             content = result_item.get('content', 'No content')
+             query = result_item.get('query', 'Original query unknown') # Get query info
+
+             results_text += f"RESULT {i+1} (From Query: {query[:100]}...)\nSource: {source}\nTitle: {title}\n"
+
+             # Truncation logic (can keep or adjust)
+             company_name = company_context.get('company_name')
+             if len(content) > 10000:
+                 first_part = content[:6000]
+                 last_part = content[-6000:]
+                 middle_part = ""
+                 if company_name and company_name.lower() in content.lower()[6000:-6000]:
+                     middle_idx = content.lower()[6000:-6000].find(company_name.lower()) + 6000
+                     start_idx = max(0, middle_idx - 150)
+                     end_idx = min(len(content), middle_idx + len(company_name) + 150)
+                     middle_part = f"... [Important company mention: {content[start_idx:end_idx]}] ..."
+                 results_text += f"Content: {first_part}... {middle_part} ...{last_part}\n\n"
+             else:
+                 results_text += f"Content: {content}\n\n"
         
         # Prepare company context text separately
         company_context_text = ""
@@ -587,7 +634,7 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
             # Also include the full JSON as a backup to ensure no information is lost
             company_context_text += "\n\nFull Company Context:\n" + json.dumps(company_context, indent=2)
         
-        # Create analysis prompt without JSON output instructions
+        # Create analysis prompt using results_text
         prompt = f"""
         <personality_analysis_request>
             <context>
@@ -728,15 +775,15 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
             
             # Create analysis result 
             analysis = {
-                "contact_id": contact_name,
+                "contact_id": contact_id,
                 "personality_analysis": response.content,
-                "search_queries_used": [str(r.get("query", ""))[:250] for r in search_results],  # Increased from 100 to 250 chars per query
+                "search_queries_used": state.get("search_queries", []),
                 "search_results": [
                     {
-                        "title": item.get("title", ""),
-                        "url": item.get("source", ""),
-                        "snippet": item.get("content", "")[:300] if item.get("content") else ""  # Added content snippet
-                    } for result in search_results for item in result.get("results", [])[:5]  # Increased from top 3 to top 5 results per query
+                        "title": r.get("title", ""),
+                        "url": r.get("source", ""),
+                        "snippet": r.get("content", "")[:300]
+                    } for r in search_results if isinstance(r, dict) and "error" not in r
                 ]
             }
             
@@ -747,7 +794,7 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
             logger.error(error_msg)
             state["errors"].append(error_msg)
             state["analysis"] = {
-                "contact_id": contact_name,
+                "contact_id": contact_id,
                 "personality_analysis": "Error during analysis",
                 "search_queries_used": [],
                 "search_results": []
@@ -805,15 +852,15 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
             
             # If no analysis was generated
             return AnalysisResult(
-                contact_id=contact.name,
+                contact_id=contact.id,
                 personality_analysis="Analysis failed",
                 error="Workflow did not produce an analysis"
             )
             
         except Exception as e:
-            logger.error(f"Error analyzing contact {contact.name}: {str(e)}")
+            logger.error(f"Error analyzing contact {contact.id}: {str(e)}")
             return AnalysisResult(
-                contact_id=contact.name,
+                contact_id=contact.id,
                 personality_analysis="Analysis failed",
                 error=str(e)
             )
@@ -849,6 +896,7 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
             async with semaphore:
                 # Extract relevant data for the analysis
                 contact_data = {
+                    "id": contact.id,
                     "name": contact.name,
                     "company": contact.company or "",
                     "title": contact.title or "",
@@ -872,19 +920,15 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
         # Process results
         for i, result in enumerate(results):
             try:
-                # Handle exceptions
                 if isinstance(result, Exception):
                     logger.error(f"Error in analysis task: {str(result)}")
                     contact = contacts[i]
                     result = AnalysisResult(
-                        contact_id=contact.name,
+                        contact_id=contact.id,
                         personality_analysis="Analysis failed",
                         error=str(result)
                     )
-                
-                # Add to result dictionary
                 result_dict[result.contact_id] = result
-                
             except Exception as e:
                 logger.error(f"Error processing result: {str(e)}")
         
@@ -911,67 +955,52 @@ IMPORTANT: ALWAYS include our company's full legal name without abbreviation or 
         return await self.analyze_personalities_with_contacts(contacts)
 
 # Function for integration with the main application
-async def analyze_personality(df: pd.DataFrame, company_context: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+async def analyze_personality(df: pd.DataFrame, company_context: Optional[Dict[str, Any]] = None,
+    ai_mode: str = "Proxy",
+    openai_api_key: Optional[str] = None,
+    proxy_api_key: Optional[str] = None,
+    proxy_base_url: str = "https://llm.data-qa.justworks.com"
+) -> pd.DataFrame:
     """
     Analyze the personalities of contacts in a DataFrame.
-    
     Args:
         df: DataFrame containing contact information and website content
         company_context: Optional company context to provide for analysis
-        
+        ai_mode: Mode of operation (Proxy or OpenAI)
+        openai_api_key: API key for OpenAI mode
+        proxy_api_key: API key for Proxy mode
+        proxy_base_url: Base URL for Proxy mode
     Returns:
         DataFrame containing the original data plus personality analysis results
     """
     try:
-        # Create analyzer instance using environment variables directly
         analyzer = PersonalityAnalyzer(
-            max_concurrent=10
+            max_concurrent=10,
+            ai_mode=ai_mode,
+            openai_api_key=openai_api_key,
+            proxy_api_key=proxy_api_key,
+            proxy_base_url=proxy_base_url
         )
-        
-        # Convert DataFrame rows to ContactInfo objects
         contacts = []
+        df = df.copy()
+        if "id" not in df.columns:
+            import uuid
+            df["id"] = [str(uuid.uuid4()) for _ in range(len(df))]
         for _, row in df.iterrows():
             contact_dict = row.to_dict()
             contact = ContactInfo.from_row(contact_dict)
             contacts.append(contact)
-        
-        # Analyze personalities
         results = await analyzer.analyze_personalities_with_contacts(contacts, company_context)
-        
-        # Create a new column for personality analysis, preserving original data
         result_df = df.copy()
-        
-        # Add analysis results to DataFrame
         for contact_id, result in results.items():
-            # Find the corresponding row(s) in the DataFrame
-            # Use fuzzy matching to find the row with the closest name match
-            best_match = None
-            best_score = 0
-            
-            for i, row in df.iterrows():
-                # Get the name from the row - try different potential column names
-                for name_col in ['full_name', 'name', 'contact_name']:
-                    if name_col in row and pd.notna(row[name_col]):
-                        row_name = str(row[name_col])
-                        # Compare with the contact_id (which is the name in our case)
-                        score = fuzz.ratio(row_name.lower(), contact_id.lower())
-                        if score > best_score:
-                            best_score = score
-                            best_match = i
-                        break
-            
-            # If we found a good match (score > 80), add the results to that row
-            if best_match is not None and best_score > 80:
-                result_df.at[best_match, 'personality_analysis'] = result.personality_analysis
-                    
-                # Add error if present
+            if contact_id in result_df["id"].values:
+                idx = result_df.index[result_df["id"] == contact_id][0]
+                result_df.at[idx, "personality_analysis"] = result.personality_analysis
                 if result.error:
-                    result_df.at[best_match, 'personality_analysis'] = f"Error: {result.error}"
-        
+                    result_df.at[idx, "personality_analysis"] = f"Error: {result.error}"
         return result_df
     except Exception as e:
         logger.error(f"Error in analyze_personality: {str(e)}")
-        # Return the original DataFrame with error information
         result_df = df.copy()
-        result_df['personality_analysis'] = f"Error in analysis: {str(e)}"
+        result_df["personality_analysis"] = f"Error in analysis: {str(e)}"
         return result_df 

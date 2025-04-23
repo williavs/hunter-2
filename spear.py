@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import asyncio
-from ai_utils.spear_email_generator import generate_spear_emails
+from ai_utils.spear_email_generator import generate_emails_for_contacts_with_prompts
 import re
+from ai_utils import prompt_library
 
 
 # Helper function to keep session state variables permanent
@@ -240,6 +241,35 @@ def show_spear_page():
                 st.session_state.p_case_studies = case_studies
                 st.success("Case studies updated successfully!")
         
+        # --- Prompt Library Selection UI ---
+        prompt_templates = prompt_library.list_prompts()
+        if prompt_templates:
+            prompt_options = {p['name']: p['id'] for p in prompt_templates}
+            default_selected = list(prompt_options.keys())[:4]  # Select first 4 by default if available
+            # Limit selection to 4
+            selected_names = st.multiselect(
+                "Select up to 4 email types to generate:",
+                options=list(prompt_options.keys()),
+                default=default_selected,
+                help="Choose up to 4 email templates to use for generation.",
+                max_selections=4 if hasattr(st, 'multiselect') and 'max_selections' in st.multiselect.__code__.co_varnames else None
+            )
+            # If more than 4 are selected (for older Streamlit), trim and warn
+            if len(selected_names) > 4:
+                st.warning("You can select a maximum of 4 email types. Only the first 4 will be used.")
+                selected_names = selected_names[:4]
+            selected_prompt_ids = [prompt_options[name] for name in selected_names]
+            st.session_state['spear_selected_prompt_ids'] = selected_prompt_ids
+            # Show preview of selected templates
+            for name in selected_names:
+                template = next((p for p in prompt_templates if p['name'] == name), None)
+                if template:
+                    with st.expander(f"Preview: {template['name']}", expanded=False):
+                        st.write(template.get('description', 'No description.'))
+                        st.code(template.get('prompt_text', ''), language='jinja')
+        else:
+            st.warning("No prompt templates found. Please add templates to the prompt library.")
+        
         # Button to generate JMM SPEAR emails for selected rows
         if st.button("Generate SPEAR Emails", key="generate_emails_btn", use_container_width=True):
             # First check session state selection if dataframe selection isn't accessible
@@ -261,67 +291,76 @@ def show_spear_page():
                     
         # Generate emails if button was clicked
         if st.session_state.p_generating_emails:
-            with st.spinner("Generating JMM-style SPEAR emails in parallel..."):
-                # Use either the dataframe selection or our persistent copy
+            with st.spinner("Generating selected SPEAR emails in parallel..."):
                 selected_indices = []
                 if 'spear_dataframe' in st.session_state and hasattr(st.session_state.spear_dataframe, 'selection') and st.session_state.spear_dataframe.selection.rows:
                     selected_indices = st.session_state.spear_dataframe.selection.rows
                 elif st.session_state.p_selected_rows:
                     selected_indices = st.session_state.p_selected_rows
-                    
                 if selected_indices:
-                    # Process in the background
                     try:
-                        # Add debug message
                         st.info(f"Processing {len(selected_indices)} selected contacts...")
-                        
-                        # Process the selected rows in true parallel, include case studies
-                        updated_df = asyncio.run(generate_spear_emails(
-                            st.session_state.p_spear_df, 
-                            company_context={"case_studies": st.session_state.p_case_studies},  # Pass case studies to the email generator
-                            selected_indices=selected_indices
-                        ))
-                        
-                        # Check if emails were actually generated
-                        has_content = False
-                        error_messages = set()
-                        
-                        # Examine the generated emails for each selected row
-                        for idx in selected_indices:
-                            for col in ["emailbody1", "emailbody2", "emailbody3", "emailbody4"]:
-                                if idx < len(updated_df) and col in updated_df.columns:
-                                    value = updated_df.iloc[idx][col]
-                                    if isinstance(value, str):
-                                        if value.strip() and not value.startswith("Error:"):
-                                            has_content = True
-                                        elif value.startswith("Error:"):
-                                            error_messages.add(value)
-                        
-                        # Update the dataframe regardless of content
-                        st.session_state.p_spear_df = updated_df
-                        
-                        # Reset state and show appropriate message
-                        st.session_state.p_generating_emails = False
-                        st.session_state.p_email_generation_complete = True
-                        
-                        if has_content:
-                            st.success(f"Successfully generated 4 SPEAR emails for {len(selected_indices)} contacts in parallel!")
+                        # Get selected prompt templates
+                        prompt_templates = prompt_library.list_prompts()
+                        selected_ids = st.session_state.get('spear_selected_prompt_ids', [])
+                        selected_templates = [p for p in prompt_templates if p['id'] in selected_ids]
+                        if not selected_templates:
+                            st.error("No prompt templates selected. Please select at least one email type.")
+                            st.session_state.p_generating_emails = False
+                            st.session_state.p_email_generation_complete = False
                         else:
-                            if error_messages:
-                                error_list = "\n".join([f"• {msg}" for msg in error_messages])
-                                st.error(f"Failed to generate emails. Errors encountered:\n{error_list}")
+                            # Prepare the company context, merging original context with case studies
+                            merged_company_context = dict(st.session_state.get("company_context", {}))
+                            if st.session_state.p_case_studies:
+                                merged_company_context["case_studies"] = st.session_state.p_case_studies
+                            
+                            # Get API/mode parameters from session state
+                            ai_mode = st.session_state.get("ai_mode", "Proxy")
+                            openai_api_key = st.session_state.get("openai_api_key", "")
+                            proxy_api_key = st.session_state.get("proxy_api_key", "")
+                            proxy_base_url = st.session_state.get("proxy_base_url", "https://llm.data-qa.justworks.com")
+                                
+                            updated_df = asyncio.run(generate_emails_for_contacts_with_prompts(
+                                st.session_state.p_spear_df,
+                                prompt_templates=selected_templates,
+                                company_context=merged_company_context, # Pass the merged context
+                                selected_indices=selected_indices,
+                                ai_mode=ai_mode,
+                                openai_api_key=openai_api_key,
+                                proxy_api_key=proxy_api_key,
+                                proxy_base_url=proxy_base_url
+                            ))
+                            # Check if emails were actually generated
+                            has_content = False
+                            error_messages = set()
+                            for idx in selected_indices:
+                                for template in selected_templates:
+                                    col = template['id']
+                                    if idx < len(updated_df) and col in updated_df.columns:
+                                        value = updated_df.iloc[idx][col]
+                                        if isinstance(value, str):
+                                            if value.strip() and not value.startswith("Error:"):
+                                                has_content = True
+                                            elif value.startswith("Error:"):
+                                                error_messages.add(value)
+                            st.session_state.p_spear_df = updated_df
+                            st.session_state.p_generating_emails = False
+                            st.session_state.p_email_generation_complete = True
+                            if has_content:
+                                st.success(f"Successfully generated {len(selected_templates)} SPEAR emails for {len(selected_indices)} contacts in parallel!")
                             else:
-                                st.warning("Email generation completed, but no content was generated. Check the logs for more details.")
-                        
-                        st.rerun()
+                                if error_messages:
+                                    error_list = "\n".join([f"• {msg}" for msg in error_messages])
+                                    st.error(f"Failed to generate emails. Errors encountered:\n{error_list}")
+                                else:
+                                    st.warning("Email generation completed, but no content was generated. Check the logs for more details.")
+                            st.rerun()
                     except Exception as e:
                         st.error(f"Error generating emails: {str(e)}")
-                        # Add more debug information
                         st.error("Check the logs for detailed error information.")
                         st.session_state.p_generating_emails = False
                         st.session_state.p_email_generation_complete = False
                 else:
-                    # No selection exists, reset the state
                     st.warning("No rows selected. Please select rows from the table below.")
                     st.session_state.p_generating_emails = False
         
@@ -425,6 +464,71 @@ def show_spear_page():
             if st.button("Customize and Download CSV", key="customize_download_btn", use_container_width=True):
                 st.session_state.p_show_download_dialog = True
                 st.rerun()
+
+    # --- Prompt Library Management UI in Sidebar ---
+    with st.sidebar:
+        with st.expander("Prompt Library Management", expanded=False):
+            st.write("Add a new prompt:")
+            new_id = st.text_input("Prompt ID", key="new_prompt_id")
+            new_name = st.text_input("Prompt Name", key="new_prompt_name")
+            new_desc = st.text_area("Description", key="new_prompt_desc")
+            new_text = st.text_area("Prompt Text", key="new_prompt_text")
+            if st.button("Add Prompt", key="add_new_prompt"):
+                if new_id and new_name and new_text:
+                    success = prompt_library.add_prompt({
+                        "id": new_id,
+                        "name": new_name,
+                        "description": new_desc,
+                        "prompt_text": new_text
+                    })
+                    if success:
+                        st.success(f"Added prompt {new_id}")
+                        st.rerun()
+                    else:
+                        st.error(f"Prompt with ID {new_id} already exists.")
+                else:
+                    st.error("ID, Name, and Prompt Text are required.")
+            # Edit prompt form
+            if 'edit_prompt_id' in st.session_state:
+                edit_data = st.session_state.get('edit_prompt_data', {})
+                st.write(f"Edit Prompt: {edit_data.get('id', '')}")
+                edit_name = st.text_input("Edit Name", value=edit_data.get('name', ''), key="edit_name")
+                edit_desc = st.text_area("Edit Description", value=edit_data.get('description', ''), key="edit_desc")
+                edit_text = st.text_area("Edit Prompt Text", value=edit_data.get('prompt_text', ''), key="edit_text")
+                if st.button("Save Changes", key="save_edit_prompt"):
+                    prompt_library.update_prompt(
+                        st.session_state['edit_prompt_id'],
+                        {
+                            "id": st.session_state['edit_prompt_id'],
+                            "name": edit_name,
+                            "description": edit_desc,
+                            "prompt_text": edit_text
+                        }
+                    )
+                    st.success(f"Updated prompt {st.session_state['edit_prompt_id']}")
+                    del st.session_state['edit_prompt_id']
+                    del st.session_state['edit_prompt_data']
+                    st.rerun()
+                if st.button("Cancel Edit", key="cancel_edit_prompt"):
+                    del st.session_state['edit_prompt_id']
+                    del st.session_state['edit_prompt_data']
+                    st.rerun()
+            st.write("Manage your email prompt templates.")
+            prompt_templates = prompt_library.list_prompts()
+            for template in prompt_templates:
+                st.markdown(f"**{template['name']}** (ID: `{template['id']}`)", help=template.get('description', ''))
+                st.code(template.get('prompt_text', ''), language='jinja')
+                cols = st.columns([1, 1, 2])
+                with cols[0]:
+                    if st.button("✏️", key=f"edit_{template['id']}"):
+                        st.session_state['edit_prompt_id'] = template['id']
+                        st.session_state['edit_prompt_data'] = template
+                with cols[1]:
+                    if st.button("🗑️", key=f"delete_{template['id']}"):
+                        prompt_library.delete_prompt(template['id'])
+                        st.success(f"Deleted prompt {template['id']}")
+                        st.rerun()
+            
 
 
 show_spear_page() 

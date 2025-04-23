@@ -611,7 +611,7 @@ def process_websites_parallel(df, website_column, max_workers=20, timeout=10, ex
                 
                 # Update the dataframe with the results
                 result_df.at[index, 'website_content'] = content
-                result_df.at[index, 'website_links'] = links
+                result_df.at[index, 'website_links'] = ', '.join(links) if isinstance(links, list) else str(links)
             except Exception as e:
                 # Handle any exceptions that occurred during processing
                 result_df.at[index, 'website_content'] = f"Error: {str(e)}"

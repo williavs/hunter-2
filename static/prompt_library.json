@@ -1,0 +1,38 @@
+[
+  {
+    "id": "emailbody1",
+    "name": "Social Proof Email",
+    "description": "Highlights similar customers who have succeeded with our product. ONLY reference companies and metrics from the provided case studies.",
+    "prompt_text": "Write a painfully short (max 3 sentences) social proof email for this contact using ONLY the provided case studies. Do not invent or hallucinate companies or metrics. Use these details: {contact_context}. Case Studies: {company_context}."
+  },
+  {
+    "id": "emailbody2",
+    "name": "Business Pain/Fear Email",
+    "description": "Emphasizes risks or opportunity costs of not acting.",
+    "prompt_text": "Write a painfully short (max 3 sentences) business pain/fear email for this contact, focusing on risks or opportunity costs. Use these details: {contact_context}. Case Studies: {company_context}."
+  },
+  {
+    "id": "emailbody3",
+    "name": "Innovation/Differentiation Email",
+    "description": "Showcases unique capabilities competitors don't have. Focus on the buying company, not the selling company.",
+    "prompt_text": "Write a painfully short (max 3 sentences) innovation/differentiation email for this contact, focusing on unique capabilities (not a feature dump, focus on the buying company). Use these details: {contact_context}. Case Studies: {company_context}."
+  },
+  {
+    "id": "emailbody4",
+    "name": "ROI/Metrics Email",
+    "description": "Focuses on specific business outcomes with precise numbers.",
+    "prompt_text": "Write a painfully short (max 3 sentences) ROI/metrics email for this contact, focusing on specific business outcomes with precise numbers. Use these details: {contact_context}. Case Studies: {company_context}."
+  },
+  {
+    "id": "creative_subject_email",
+    "name": "Creative Subject Line Email",
+    "description": "Generates five bold, unconventional subject lines and a short, punchy Justworks outreach email. Uses Justworks brand voice and focuses on WIFM (what's in it for them).",
+    "prompt_text": "Generate five creative, bold, and unconventional subject lines for a cold email to this contact. Then, write a short, punchy email (max 3 sentences) that opens with immediate value for the recipient, uses Justworks' mission-driven positioning, and ends with a unique, non-repetitive CTA. Use these details: {contact_context}. Case Studies: {company_context}. Return as JSON: {\"subject_lines\": [\"...\", ...], \"email\": \"...\"}"
+  },
+  {
+    "id": "risk_assessment_email",
+    "name": "Risk Assessment & Fit Email",
+    "description": "Generates a concise outreach email and a risk fit classification (bad/questionable/good) with rationale, using only company website data. Email is tailored to fit level and Justworks value prop.",
+    "prompt_text": "Based only on the company's website and provided data, classify the company as 'Bad fit', 'Questionable fit', or 'Good fit' for Justworks, and provide a brief rationale. Then, write a concise outreach email (max 2 sentences) tailored to their fit level, using Justworks' mission-driven value prop. Use these details: {contact_context}. Return as JSON: {\"fit\": \"Bad fit|Questionable fit|Good fit\", \"rationale\": \"...\", \"email\": \"...\"}"
+  }
+]

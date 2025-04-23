@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import our custom modules
 from ai_utils.personality_analyzer import PersonalityAnalyzer, ContactInfo
-from ai_utils.company_context_workflow import ChatOpenRouter, analyze_company_context
+from old_files.company_context_workflow import ChatOpenRouter, analyze_company_context
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

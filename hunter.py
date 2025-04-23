@@ -91,70 +91,53 @@ def show_main_page():
 # ==========================
 async def run_personality_analysis(df, company_context=None):
     """Run personality analysis in async context"""
-    # Make sure we have the correct name column information
+    # Ensure id column exists for robust matching
+    df = df.copy()
+    if "id" not in df.columns:
+        import uuid
+        df["id"] = [str(uuid.uuid4()) for _ in range(len(df))]
     name_column = st.session_state.name_column
-    
     # If we have combined first and last names, make sure the full_name column exists
     if st.session_state.get("has_combined_names", False) and "full_name" in df.columns:
-        # The full_name column is already in the DataFrame
         pass
     elif st.session_state.get("website_mapping", {}).get("has_separate_names", False):
-        # We need to combine first and last names
         first_name_column = st.session_state.website_mapping.get("first_name_column")
         last_name_column = st.session_state.website_mapping.get("last_name_column")
-        
         if first_name_column and last_name_column and first_name_column in df.columns and last_name_column in df.columns:
-            # Create a copy of the dataframe
-            df = df.copy()
-            
-            # Combine first and last names into a new column
             df['full_name'] = df.apply(
                 lambda row: f"{row[first_name_column]} {row[last_name_column]}".strip(), 
                 axis=1
             )
-            
-            # Update the name column to use the full_name
             name_column = "full_name"
             st.session_state.name_column = name_column
-    
-    # Create a progress bar and status text
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
     try:
-        # Get number of contacts for status updates
         total_rows = len(df)
-        
-        # Update status
         status_text.text(f"Analyzing {total_rows} contacts...")
-        
-        # Call the analyze_personality function with the DataFrame
+        ai_mode = st.session_state.get("ai_mode", "Proxy")
+        openai_api_key = st.session_state.get("openai_api_key", "")
+        proxy_api_key = st.session_state.get("proxy_api_key", "")
+        proxy_base_url = st.session_state.get("proxy_base_url", "https://llm.data-qa.justworks.com")
         result_df = await analyze_personality(
             df=df, 
-         
             company_context=company_context,
-        
+            ai_mode=ai_mode,
+            openai_api_key=openai_api_key,
+            proxy_api_key=proxy_api_key,
+            proxy_base_url=proxy_base_url
         )
-        
-        # Set progress to complete
         progress_bar.progress(1.0)
         status_text.text(f"Analysis complete for {total_rows} contacts")
-        
-        # Add company context info to the result
         if company_context and "company_context" not in result_df.columns:
             company_name = company_context.get('name', 'Unknown')
             company_desc = company_context.get('description', '')
-            if company_desc and len(company_desc) > 100:
-                company_desc = company_desc[:97] + '...'
             result_df['company_context'] = f"{company_name}: {company_desc}"
-        
         return result_df
-        
     except Exception as e:
         st.error(f"An error occurred during personality analysis: {str(e)}")
         return df
     finally:
-        # Clean up progress indicators
         try:
             progress_bar.empty()
             status_text.empty()
@@ -276,15 +259,26 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
                 # Run analysis on the company website
                 with st.spinner("Analyzing company..."):
                     try:
+                        # Get API/mode parameters from session state
+                        ai_mode = st.session_state.get("ai_mode", "Proxy")
+                        openai_api_key = st.session_state.get("openai_api_key", "")
+                        proxy_api_key = st.session_state.get("proxy_api_key", "")
+                        proxy_base_url = st.session_state.get("proxy_base_url", "https://llm.data-qa.justworks.com")
+                        
                         # Analyze the company using the provided information
                         company_context = asyncio.run(analyze_company_context(
                             company_url=company_url,
                             company_name=company_name,
                      
                             target_geography=target_geography,
+                            ai_mode=ai_mode,
+                            openai_api_key=openai_api_key,
+                            proxy_api_key=proxy_api_key,
+                            proxy_base_url=proxy_base_url,
                         ))
                         
                         # Store the context in session state
+                        # The company_context dict contains keys like 'name', 'description', 'url', 'target_geography', etc.
                         st.session_state.company_context = company_context
                         st.session_state.context_generated = True
                         st.rerun()
@@ -403,10 +397,6 @@ with st.expander("Step 1. Setup Company Context", expanded=False):
         st.markdown("**Company Description**:")
         st.markdown(f"_{company_context.get('description', '')}_")
         st.markdown(f"**Target Geography**: {company_context.get('target_geography', 'Global')}")
-        
-        # Show confidence level if available
-        if "confidence" in company_context:
-            st.info(f"📈 Analysis Confidence: {company_context.get('confidence', 'Medium')}")
         
         # Option to edit again
         if st.button("Edit Context", key="edit_context_btn"):
@@ -541,12 +531,19 @@ if uploaded_file is not None:
                 "company_context": st.column_config.TextColumn("Company Context", help="The company context used for this contact's analysis")
             })
         
-        # If we have scraped data, use that instead
+        # Restore permanent state if available
+        if "p_df" in st.session_state and st.session_state.p_df is not None:
+            st.session_state.df = st.session_state.p_df
+        if "p_processing_complete" in st.session_state:
+            st.session_state.processing_complete = st.session_state.p_processing_complete
+        
         if st.session_state.scraped_df is not None:
             df = st.session_state.scraped_df
             st.session_state.df = df
             st.session_state.scraped_df = None
             st.session_state.processing_complete = True
+            st.session_state.p_df = df.copy()
+            st.session_state.p_processing_complete = True
         
         # Determine which columns should be disabled in the editor
         disabled_columns = ["website_content", "website_links"]
@@ -628,6 +625,14 @@ if uploaded_file is not None:
         
         # Personality Analysis section - only enabled after website processing
         with col2:
+            # Debug output for troubleshooting
+            st.write("processing_complete:", st.session_state.get("processing_complete"))
+            st.write("df shape:", None if st.session_state.df is None else st.session_state.df.shape)
+            # Add user feedback if button is disabled
+            if not st.session_state.processing_complete:
+                st.warning("Website scraping must be completed before running personality analysis.")
+            elif st.session_state.df is None or len(st.session_state.df) == 0:
+                st.warning("No data available for analysis. Please upload and process your contact file.")
             # Add a slider to control how many rows to analyze when processing is complete
             if st.session_state.processing_complete:
                 total_rows = len(df)
@@ -635,12 +640,15 @@ if uploaded_file is not None:
                 # Handle case when there are no rows or only one row
                 if total_rows <= 0:
                     st.warning("No rows available to analyze. Please upload data with valid website URLs.")
+                elif total_rows == 1:
+                    max_rows_to_analyze = 1
+                    st.info("Only one row available to analyze.")
                 else:
                     max_rows_to_analyze = st.slider(
                         "Number of rows to analyze:",
                         min_value=1,
-                        max_value=max(1, total_rows),  # Ensure max_value is at least 1
-                        value=min(total_rows, 10),     # Default to 10 rows or total if less
+                        max_value=total_rows,
+                        value=min(total_rows, 10),
                         step=1,
                         key="max_rows_slider"
                     )
@@ -655,50 +663,58 @@ if uploaded_file is not None:
             if analyze_button:
                 # Get the number of rows to analyze from the slider, ensure it's at least 1
                 max_rows = min(st.session_state.get("max_rows_slider", 1), max(1, len(df)))
-                
-                # Limit the dataframe to the selected number of rows
                 analysis_df = df.head(max_rows)
-                
-                # Count rows with website content for informational purposes
                 rows_with_content = len(analysis_df[analysis_df['website_content'].notna() & (analysis_df['website_content'] != "")])
-                
-                # Display info about the analysis
                 st.info(f"Analyzing {max_rows} contacts using Claude via OpenRouter. {rows_with_content} contacts have website content.")
                 st.warning(f"This will take a few minutes. You can navigate to another page, but keep this one open until the AI finsihes.")
-                
-                # Check for company context
                 company_context = st.session_state.get("company_context", None)
                 context_approved = st.session_state.get("context_approved", False)
-                
-                # Check if company context exists and is approved
                 if not context_approved:
                     st.warning("Please approve your company context in Step 1 before analyzing personalities.")
                     st.info("If you've already set up your company context, click 'Approve' to continue.")
-                else:            
-                    # Process personality analysis
-                    with st.spinner(f"Analyzing personalities for {max_rows} contacts..."):
-                        # Run the analysis
-                        full_df = asyncio.run(run_personality_analysis(
-                            df=analysis_df, 
-                            company_context=company_context
-                        ))
-                        
-                        # Get number of contacts successfully analyzed
-                        analyzed_count = sum(1 for _, row in full_df.iterrows() 
-                                           if "personality_analysis" in full_df.columns 
-                                           and pd.notna(row["personality_analysis"]) 
-                                           and row["personality_analysis"].strip() != ""
-                                           and not row["personality_analysis"].strip().startswith("Error"))
-                        
-                        # Update the session state with the full dataframe including analysis
-                        st.session_state.df = full_df
-                        st.session_state.p_df = full_df.copy()
-                        st.session_state.personality_analysis_complete = True
-                        st.success(f"Successfully analyzed personalities for {analyzed_count} contacts!")
-                        st.success("Proceed to the Spear page to write emails.")
-                        
-                        st.rerun()
-            
+                else:
+                    import sys
+                    import asyncio
+                    try:
+                        with st.spinner(f"Analyzing personalities for {max_rows} contacts..."):
+                            # Use correct async pattern for Streamlit
+                            if sys.version_info >= (3, 7):
+                                try:
+                                    loop = asyncio.get_running_loop()
+                                    # If we're in an event loop, create a task and await it
+                                    task = asyncio.create_task(run_personality_analysis(
+                                        df=analysis_df,
+                                        company_context=company_context
+                                    ))
+                                    full_df = asyncio.run_coroutine_threadsafe(task, loop).result()
+                                except RuntimeError:
+                                    # No running event loop, safe to use asyncio.run
+                                    full_df = asyncio.run(run_personality_analysis(
+                                        df=analysis_df,
+                                        company_context=company_context
+                                    ))
+                            else:
+                                # Fallback for older Python
+                                full_df = asyncio.run(run_personality_analysis(
+                                    df=analysis_df,
+                                    company_context=company_context
+                                ))
+                            analyzed_count = sum(1 for _, row in full_df.iterrows() 
+                                               if "personality_analysis" in full_df.columns 
+                                               and pd.notna(row["personality_analysis"]) 
+                                               and row["personality_analysis"].strip() != ""
+                                               and not row["personality_analysis"].strip().startswith("Error"))
+                            st.session_state.df = full_df
+                            st.session_state.p_df = full_df.copy()
+                            st.session_state.personality_analysis_complete = True
+                            st.success(f"Successfully analyzed personalities for {analyzed_count} contacts!")
+                            st.success("Proceed to the Spear page to write emails.")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error during personality analysis: {e}")
+                        import traceback
+                        st.exception(traceback.format_exc())
+        
         
         # Download section
         st.subheader("Download Data")
